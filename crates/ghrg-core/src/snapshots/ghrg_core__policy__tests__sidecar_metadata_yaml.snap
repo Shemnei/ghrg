@@ -1,0 +1,14 @@
+---
+source: crates/ghrg-core/src/policy.rs
+expression: render_diagnostic(&error)
+---
+  x failed to parse sidecar metadata in `/home/mtx/projects/ghrg/crates/ghrg-core/tests/fixtures/bad-sidecar.ghrg.yaml`: did not find expected node content at line 3 column 1, while parsing a flow
+  | node
+  `-> did not find expected node content at line 3 column 1, while parsing a flow node
+   ,-[/home/mtx/projects/ghrg/crates/ghrg-core/tests/fixtures/bad-sidecar.ghrg.yaml:1:1]
+ 1 | name: bad
+   : |
+   : `-- invalid YAML in sidecar metadata
+ 2 | contexts: [
+   `----
+  help: fix the YAML in the sidecar metadata file

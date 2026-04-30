@@ -1,0 +1,41 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+  ],
+
+  labels: ["dependencies"],
+  dependencyDashboard: true,
+  rebaseWhen: "behind-base-branch",
+  rangeStrategy: "bump",
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 4am on monday"],
+  },
+
+  packageRules: [
+    {
+      description: "Keep GitHub Actions updates readable and batched.",
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["digest", "patch", "minor", "pin"],
+      groupName: "github actions",
+      groupSlug: "github-actions",
+    },
+    {
+      description: "Batch non-breaking Rust dependency updates.",
+      matchManagers: ["cargo"],
+      matchUpdateTypes: ["patch", "minor", "pin", "digest"],
+      groupName: "rust crates",
+      groupSlug: "rust-crates",
+      postUpdateOptions: ["cargoUpdateLockfile"],
+    },
+    {
+      description: "Keep major Rust updates isolated for review.",
+      matchManagers: ["cargo"],
+      matchUpdateTypes: ["major"],
+      separateMajorMinor: true,
+      postUpdateOptions: ["cargoUpdateLockfile"],
+    },
+  ],
+}

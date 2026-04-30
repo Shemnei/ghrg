@@ -1,0 +1,42 @@
+{
+  "archived": false,
+  "contexts": {
+    "repo_properties": {
+      "CodeOwner": "@example/platform",
+      "Team": "platform"
+    }
+  },
+  "default_branch": "main",
+  "fork": false,
+  "full_name": "example-org/example-repo",
+  "github": {
+    "created_at": "2023-01-01T00:00:00Z",
+    "description": "Example repository sample",
+    "disabled": false,
+    "forks_count": 2,
+    "has_downloads": false,
+    "has_issues": true,
+    "has_pages": false,
+    "has_projects": false,
+    "has_wiki": false,
+    "homepage": "https://example.com",
+    "html_url": "https://github.com/example-org/example-repo",
+    "id": 1,
+    "is_template": false,
+    "language": "Rust",
+    "open_issues_count": 1,
+    "private": false,
+    "pushed_at": "2024-01-01T00:00:00Z",
+    "size": 128,
+    "stargazers_count": 5,
+    "updated_at": "2024-01-15T00:00:00Z",
+    "url": "https://api.github.com/repos/example-org/example-repo",
+    "watchers_count": 5
+  },
+  "name": "example-repo",
+  "owner": "example-org",
+  "topics": [
+    "governance"
+  ],
+  "visibility": "public"
+}

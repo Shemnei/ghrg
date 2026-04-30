@@ -1,0 +1,28 @@
+{
+  "name": "api",
+  "owner": "acme",
+  "full_name": "acme/api",
+  "archived": false,
+  "fork": false,
+  "visibility": "public",
+  "default_branch": "main",
+  "topics": ["governance", "platform"],
+  "github": {
+    "id": 1,
+    "private": false,
+    "html_url": "https://github.com/acme/api",
+    "url": "https://api.github.com/repos/acme/api",
+    "pushed_at": "2025-01-01T00:00:00Z",
+    "updated_at": "2025-01-10T00:00:00Z"
+  },
+  "contexts": {
+    "repo_properties": {
+      "Team": "platform",
+      "CodeOwner": "@example/platform"
+    },
+    "languages": {
+      "Rust": 120000,
+      "Shell": 2000
+    }
+  }
+}

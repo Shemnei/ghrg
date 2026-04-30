@@ -1,0 +1,8 @@
+name: project-summary
+description: Project a compact repo summary for local testing
+contexts:
+  - name: repo_properties
+    type: properties
+    names:
+      - Team
+      - CostCenter

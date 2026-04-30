@@ -1,0 +1,8 @@
+name: repo-ownership-summary
+description: Emit repo name, Team, CodeOwner, and public visibility
+contexts:
+  - name: repo_properties
+    type: properties
+    names:
+      - Team
+      - CodeOwner

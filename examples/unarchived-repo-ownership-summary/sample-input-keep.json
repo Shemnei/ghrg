@@ -1,0 +1,16 @@
+{
+  "name": "api",
+  "owner": "acme",
+  "full_name": "acme/api",
+  "archived": false,
+  "fork": false,
+  "visibility": "public",
+  "default_branch": "main",
+  "topics": ["governance", "platform"],
+  "contexts": {
+    "repo_properties": {
+      "Team": "platform",
+      "CodeOwner": "@example/platform"
+    }
+  }
+}

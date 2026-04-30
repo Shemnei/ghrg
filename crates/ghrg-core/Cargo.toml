@@ -1,0 +1,34 @@
+[package]
+name = "ghrg-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Core GitHub repository scanning and Rego policy evaluation for ghrg"
+repository = "https://github.com/Shemnei/ghrg"
+homepage = "https://github.com/Shemnei/ghrg"
+documentation = "https://docs.rs/ghrg-core"
+readme = "../../README.md"
+keywords = ["github", "rego", "policy", "governance"]
+categories = ["development-tools", "api-bindings"]
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+csv.workspace = true
+globset.workspace = true
+hex.workspace = true
+jsonwebtoken.workspace = true
+miette.workspace = true
+octocrab.workspace = true
+regorus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+insta = "1.47.2"

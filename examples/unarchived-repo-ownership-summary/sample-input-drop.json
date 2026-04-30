@@ -1,0 +1,16 @@
+{
+  "name": "legacy-service",
+  "owner": "acme",
+  "full_name": "acme/legacy-service",
+  "archived": true,
+  "fork": false,
+  "visibility": "private",
+  "default_branch": "main",
+  "topics": ["legacy"],
+  "contexts": {
+    "repo_properties": {
+      "Team": "core-services",
+      "CodeOwner": "@example/core-services"
+    }
+  }
+}

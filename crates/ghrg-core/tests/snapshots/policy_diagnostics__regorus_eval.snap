@@ -1,0 +1,17 @@
+---
+source: crates/ghrg-core/tests/policy_diagnostics.rs
+expression: render_diagnostic(&error)
+---
+  x policy evaluation failed for `/home/mtx/projects/ghrg/crates/ghrg-core/tests/fixtures/bad-eval.rego` while evaluating `data.ghrg.repos.allow`:
+  | --> /home/mtx/projects/ghrg/crates/ghrg-core/tests/fixtures/bad-eval.rego:5:14
+  |   |
+  | 5 | allow if { 1 / 0 > 0 }
+  |   |              ^
+  | error: divide by zero
+   ,-[/home/mtx/projects/ghrg/crates/ghrg-core/tests/fixtures/bad-eval.rego:5:14]
+ 4 | 
+ 5 | allow if { 1 / 0 > 0 }
+   :              |
+   :              `-- policy involved in this failure
+   `----
+  help: check the Rego package and rule names, and validate the input shape
