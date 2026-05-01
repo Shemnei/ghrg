@@ -1,11 +1,12 @@
 ---
 source: crates/ghrg-core/tests/policy_diagnostics.rs
+assertion_line: 28
 expression: render_diagnostic(&error)
 ---
-  x failed to parse embedded metadata in `/home/mtx/projects/ghrg/crates/ghrg-core/tests/fixtures/bad-frontmatter.rego`: did not find expected node content at line 5 column 1, while parsing a flow
+  x failed to parse embedded metadata in `$CARGO_MANIFEST_DIR/tests/fixtures/bad-frontmatter.rego`: did not find expected node content at line 5 column 1, while parsing a flow
   | node
   `-> did not find expected node content at line 5 column 1, while parsing a flow node
-   ,-[/home/mtx/projects/ghrg/crates/ghrg-core/tests/fixtures/bad-frontmatter.rego:6:1]
+   ,-[$CARGO_MANIFEST_DIR/tests/fixtures/bad-frontmatter.rego:6:1]
  5 | #     limit: [
  6 | # ```
    : |

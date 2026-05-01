@@ -14,5 +14,7 @@ pub fn render_diagnostic(error: &GhrgError) -> String {
     GraphicalReportHandler::new_themed(GraphicalTheme::none())
         .render_report(&mut output, error)
         .unwrap();
-    output
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    output.replace(manifest_dir, "$CARGO_MANIFEST_DIR")
 }
