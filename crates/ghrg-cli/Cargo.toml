@@ -3,7 +3,6 @@ name = "ghrg"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
 description = "GitHub repository governance CLI with Rego-based policy evaluation"
 repository = "https://github.com/Shemnei/ghrg"
 homepage = "https://github.com/Shemnei/ghrg"

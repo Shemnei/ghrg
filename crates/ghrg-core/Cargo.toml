@@ -3,7 +3,6 @@ name = "ghrg-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
 description = "Core GitHub repository scanning and Rego policy evaluation for ghrg"
 repository = "https://github.com/Shemnei/ghrg"
 homepage = "https://github.com/Shemnei/ghrg"
