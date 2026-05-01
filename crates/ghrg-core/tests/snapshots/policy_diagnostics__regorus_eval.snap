@@ -1,6 +1,5 @@
 ---
 source: crates/ghrg-core/tests/policy_diagnostics.rs
-assertion_line: 50
 expression: render_diagnostic(&error)
 ---
   x policy evaluation failed for `$CARGO_MANIFEST_DIR/tests/fixtures/bad-eval.rego` while evaluating `data.ghrg.repos.allow`:

@@ -690,16 +690,27 @@ impl PolicySource {
     }
 
     fn find_trimmed_line_span(&self, predicate: impl Fn(&str) -> bool) -> Option<SourceSpan> {
-        let mut offset = 0usize;
-        for line in self.source.lines() {
+        for (offset, line) in source_line_segments(&self.source) {
             let trimmed = line.trim();
             if predicate(trimmed) {
                 return Some((offset, line.len().max(1)).into());
             }
-            offset += line.len() + 1;
         }
         None
     }
+}
+
+fn source_line_segments(source: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut offset = 0usize;
+
+    source.split_inclusive('\n').map(move |segment| {
+        let current_offset = offset;
+        offset += segment.len();
+
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        (current_offset, line)
+    })
 }
 
 fn load_policy_metadata(source: &PolicySource) -> Result<Option<LoadedPolicyMetadata>> {
@@ -823,9 +834,8 @@ fn parse_embedded_metadata_document(source: &PolicySource) -> Result<Option<Meta
     let mut open_span = None;
     let mut yaml_start = None;
     let mut yaml_end = None;
-    let mut offset = 0usize;
 
-    for line in source.source.lines() {
+    for (offset, line) in source_line_segments(&source.source) {
         let trimmed = line.trim();
 
         if !saw_open && trimmed.starts_with("package ") {
@@ -843,7 +853,6 @@ fn parse_embedded_metadata_document(source: &PolicySource) -> Result<Option<Meta
             saw_open = true;
             in_block = true;
             open_span = Some((offset, line.len().max(1)).into());
-            offset += line.len() + 1;
             continue;
         }
 
@@ -872,8 +881,6 @@ fn parse_embedded_metadata_document(source: &PolicySource) -> Result<Option<Meta
             yaml_end = Some(offset + line.len());
             yaml_lines.push(content.to_string());
         }
-
-        offset += line.len() + 1;
     }
 
     if saw_open {
@@ -1520,6 +1527,28 @@ mod tests {
                 assert_eq!(span.offset(), 57);
             }
             _ => panic!("expected policy evaluation error"),
+        }
+    }
+
+    #[test]
+    fn embedded_metadata_yaml_error_span_handles_crlf_newlines() {
+        let source = PolicySource {
+            path: PathBuf::from("bad-frontmatter.rego"),
+            package: Some("ghrg.repos".to_string()),
+            source: "# ```ghrg\r\n# name: bad\r\n# contexts:\r\n#   - type: commits\r\n#     limit: [\r\n# ```\r\n\r\npackage ghrg.repos\r\n"
+                .to_string(),
+        };
+
+        let error = load_policy_metadata(&source).unwrap_err();
+
+        match error {
+            GhrgError::EmbeddedMetadataYaml { span, .. } => {
+                assert_eq!(
+                    span.offset(),
+                    source.source.find("# ```\r\n\r\npackage").unwrap()
+                );
+            }
+            _ => panic!("expected embedded metadata YAML error"),
         }
     }
 
