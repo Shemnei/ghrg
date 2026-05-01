@@ -214,9 +214,19 @@ fn github_app_lookup(source: AuthSource) -> Vec<&'static str> {
 #[cfg(all(feature = "secret-service", target_os = "linux", target_env = "gnu"))]
 mod secret_service {
     use super::*;
-    use keyring::{Entry, Error as KeyringError};
+    use dbus_secret_service_keyring_store::Store;
+    use keyring_core::{Entry, Error as KeyringError, set_default_store};
+
+    fn set_secret_service_store() -> Result<()> {
+        let store = Store::new()
+            .into_diagnostic()
+            .map_err(|_| miette!("failed to initialize Secret Service store"))?;
+        set_default_store(store);
+        Ok(())
+    }
 
     pub(super) fn entry(entry: &'static str) -> Result<Option<String>> {
+        set_secret_service_store()?;
         let secret_entry = Entry::new(GHRG_SECRET_SERVICE, entry)
             .into_diagnostic()
             .map_err(|_| miette!("failed to open Secret Service entry `{entry}`"))?;

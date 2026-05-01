@@ -13,7 +13,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [features]
 default = []
-secret-service = ["dep:keyring"]
+secret-service = ["dep:keyring-core", "dep:dbus-secret-service-keyring-store"]
 
 [dependencies]
 clap.workspace = true
@@ -37,4 +37,5 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
-keyring = { workspace = true, optional = true, features = ["sync-secret-service", "crypto-rust"] }
+dbus-secret-service-keyring-store = { workspace = true, optional = true, features = ["crypto-rust"] }
+keyring-core = { workspace = true, optional = true }
