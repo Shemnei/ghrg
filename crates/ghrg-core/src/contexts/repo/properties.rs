@@ -1,13 +1,11 @@
-use crate::contexts::{
-    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
-};
+use crate::contexts::{ContextSpec, ContextValue, DynamicContextData};
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::{RepoContextCatalogEntry, RepoContextFieldDoc, SampleRepoSeed};
+use super::{RepoContextCatalogEntry, RepoContextFieldDoc, RepoContextResolver, SampleRepoSeed};
 
 pub const KIND: &str = "properties";
 
@@ -34,25 +32,21 @@ pub const CATALOG_ENTRY: RepoContextCatalogEntry = RepoContextCatalogEntry {
 };
 
 pub fn example_spec(_default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some("repo_properties".to_string()),
-        },
-        provider: ContextProvider::Properties(RepoPropertiesContext {
+    spec(
+        Some("repo_properties"),
+        &RepoPropertiesContext {
             names: vec!["Team".to_string(), "CodeOwner".to_string()].into(),
-        }),
-    }
+        },
+    )
 }
 
 pub fn explicit_spec(_default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some(KIND.to_string()),
-        },
-        provider: ContextProvider::Properties(RepoPropertiesContext {
+    spec(
+        Some(KIND),
+        &RepoPropertiesContext {
             names: vec!["Team".to_string(), "CodeOwner".to_string()].into(),
-        }),
-    }
+        },
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -65,12 +59,12 @@ impl RepoPropertiesContext {
     pub fn validate(&self) -> std::result::Result<(), String> {
         self.names.validate_source("properties.names")?;
 
-        if let Some(names) = self.names.literal() {
-            if names.is_empty() || names.iter().any(|value| value.is_empty()) {
-                return Err(
-                    "`properties.names` must contain at least one non-empty string".to_string(),
-                );
-            }
+        if let Some(names) = self.names.literal()
+            && (names.is_empty() || names.iter().any(|value| value.is_empty()))
+        {
+            return Err(
+                "`properties.names` must contain at least one non-empty string".to_string(),
+            );
         }
 
         if let Some(default) = self.names.default_value()
@@ -119,36 +113,86 @@ impl RepoPropertiesContext {
         })
     }
 
-    pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
-    where
-        T: ResolveRepoProperties + Sync,
-    {
-        client.resolve_repo_properties(repo, self).await
+    pub async fn resolve(
+        &self,
+        client: &dyn RepoDataSource,
+        repo: &RepositoryBase,
+    ) -> Result<Value> {
+        let names = self.names.literal().cloned().unwrap_or_default();
+        client
+            .fetch_repo_properties(&repo.owner, &repo.name, &names.into_iter().collect())
+            .await
+            .map(Value::Object)
     }
 }
 
-#[async_trait]
-pub trait ResolveRepoProperties {
-    async fn resolve_repo_properties(
-        &self,
-        repo: &RepositoryBase,
-        context: &RepoPropertiesContext,
-    ) -> Result<Value>;
-}
+pub struct PropertiesResolver;
+pub static RESOLVER: PropertiesResolver = PropertiesResolver;
 
 #[async_trait]
-impl<T> ResolveRepoProperties for T
-where
-    T: RepoDataSource + Sync,
-{
-    async fn resolve_repo_properties(
+impl RepoContextResolver for PropertiesResolver {
+    fn validate_params(&self, params: &Map<String, Value>) -> std::result::Result<(), String> {
+        parse_params(params)?.validate()
+    }
+
+    fn render_params(&self, params: &Map<String, Value>) -> std::result::Result<String, String> {
+        Ok(parse_params(params)?.render_params())
+    }
+
+    fn sample_value(
         &self,
+        params: &Map<String, Value>,
+        seed: &SampleRepoSeed,
+    ) -> std::result::Result<Value, String> {
+        Ok(parse_params(params)?.sample_value(seed))
+    }
+
+    fn resolve_dynamic(
+        &self,
+        params: &Map<String, Value>,
+        runtime: &DynamicContextData<'_>,
+    ) -> std::result::Result<Map<String, Value>, crate::error::GhrgError> {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        let resolved = context.resolve_dynamic(runtime)?;
+        Ok(to_params(&resolved))
+    }
+
+    async fn resolve(
+        &self,
+        client: &dyn RepoDataSource,
         repo: &RepositoryBase,
-        context: &RepoPropertiesContext,
-    ) -> Result<Value> {
-        let names = context.names.literal().cloned().unwrap_or_default();
-        self.fetch_repo_properties(&repo.owner, &repo.name, &names.into_iter().collect())
-            .await
-            .map(Value::Object)
+        params: &Map<String, Value>,
+    ) -> std::result::Result<Value, crate::error::GhrgError> {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        context.resolve(client, repo).await
+    }
+}
+
+fn parse_params(params: &Map<String, Value>) -> std::result::Result<RepoPropertiesContext, String> {
+    serde_json::from_value(Value::Object(params.clone())).map_err(|error| error.to_string())
+}
+
+fn to_params(context: &RepoPropertiesContext) -> Map<String, Value> {
+    serde_json::to_value(context)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn spec(name: Option<&str>, context: &RepoPropertiesContext) -> ContextSpec {
+    ContextSpec {
+        name: name.map(ToString::to_string),
+        kind: KIND.to_string(),
+        params: to_params(context),
     }
 }

@@ -140,7 +140,7 @@ fn collect_sample_context_specs(
             .iter()
             .find(|existing| existing.input_key() == spec.input_key())
         {
-            if existing.provider != spec.provider {
+            if !existing.same_provider(&spec) {
                 return Err(miette!(
                     "conflicting context specifications for `{}`",
                     spec.input_key()
@@ -248,7 +248,7 @@ mod tests {
         let policy = dir.join("sample.rego");
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - name: repo_properties\n#     type: properties\n#     names: [\"Team\"]\n# ```\n\npackage ghrg.repos\n",
+            "# ```ghrg\n# contexts:\n#   - name: repo_properties\n#     type: properties\n#     params:\n#       names: [\"Team\"]\n# ```\n\npackage ghrg.repos\n",
         )
         .unwrap();
 
@@ -312,7 +312,7 @@ mod tests {
         let policy = dir.join("sample.rego");
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: files\n#     limit: 1\n# ```\n\npackage ghrg.repos\n",
+            "# ```ghrg\n# contexts:\n#   - type: files\n#     params:\n#       limit: 1\n# ```\n\npackage ghrg.repos\n",
         )
         .unwrap();
 

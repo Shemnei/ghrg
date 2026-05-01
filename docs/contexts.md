@@ -29,9 +29,10 @@ Example:
 contexts:
   - name: repo_properties
     type: properties
-    names:
-      - Team
-      - CodeOwner
+    params:
+      names:
+        - Team
+        - CodeOwner
 ```
 
 Then in Rego:
@@ -47,18 +48,21 @@ Context fields can use either:
 - a literal value (existing behavior)
 - a dynamic reference object with `from` and optional `default`
 
+Context-specific fields live under `params`.
+
 Example:
 
 ```yaml
 contexts:
   - name: recent_commits
     type: commits
-    limit:
-      from: input.max_commit_limit
-      default: 5
-    ref:
-      from: env.GHRG_REF
-      default: main
+    params:
+      limit:
+        from: input.max_commit_limit
+        default: 5
+      ref:
+        from: env.GHRG_REF
+        default: main
 ```
 
 Supported reference roots:
@@ -92,8 +96,8 @@ Purpose:
 
 Config fields:
 
-- required: `names`
-- optional: `name`
+- optional top-level: `name`
+- required in `params`: `names`
 
 Rules:
 
@@ -105,9 +109,10 @@ Example declaration:
 contexts:
   - name: repo_properties
     type: properties
-    names:
-      - Team
-      - CodeOwner
+    params:
+      names:
+        - Team
+        - CodeOwner
 ```
 
 Sample shape:
@@ -140,8 +145,8 @@ Purpose:
 
 Config fields:
 
-- optional: `name`
-- no extra required parameters
+- optional top-level: `name`
+- no parameters under `params`
 
 Example declaration:
 
@@ -187,9 +192,9 @@ Purpose:
 
 Config fields:
 
-- optional: `name`
-- optional: `limit`
-- optional: `protected`
+- optional top-level: `name`
+- optional in `params`: `limit`
+- optional in `params`: `protected`
 
 Rules:
 
@@ -202,8 +207,9 @@ Example declaration:
 contexts:
   - name: protected_branches
     type: branches
-    limit: 5
-    protected: true
+    params:
+      limit: 5
+      protected: true
 ```
 
 Sample shape:
@@ -240,11 +246,11 @@ Purpose:
 
 Config fields:
 
-- optional: `name`
-- optional: `limit`
-- optional: `path`
-- optional: `author`
-- optional: `ref`
+- optional top-level: `name`
+- optional in `params`: `limit`
+- optional in `params`: `path`
+- optional in `params`: `author`
+- optional in `params`: `ref`
 
 Rules:
 
@@ -258,9 +264,10 @@ Example declaration:
 contexts:
   - name: recent_src_commits
     type: commits
-    limit: 3
-    path: src/
-    ref: main
+    params:
+      limit: 3
+      path: src/
+      ref: main
 ```
 
 Sample shape:
@@ -300,11 +307,11 @@ Purpose:
 
 Config fields:
 
-- optional: `name`
-- optional: `glob`
-- optional: `limit`
-- optional: `ref`
-- optional: `include_content`
+- optional top-level: `name`
+- optional in `params`: `glob`
+- optional in `params`: `limit`
+- optional in `params`: `ref`
+- optional in `params`: `include_content`
 
 Rules:
 
@@ -320,10 +327,11 @@ Example declaration:
 contexts:
   - name: workflow_files
     type: files
-    glob: .github/workflows/*.yml
-    limit: 20
-    ref: main
-    include_content: true
+    params:
+      glob: .github/workflows/*.yml
+      limit: 20
+      ref: main
+      include_content: true
 ```
 
 Sample shape:
@@ -374,9 +382,9 @@ Purpose:
 
 Config fields:
 
-- optional: `name`
-- optional: `limit`
-- optional: `anonymous`
+- optional top-level: `name`
+- optional in `params`: `limit`
+- optional in `params`: `anonymous`
 
 Rules:
 
@@ -389,8 +397,9 @@ Example declaration:
 contexts:
   - name: top_contributors
     type: contributors
-    limit: 10
-    anonymous: false
+    params:
+      limit: 10
+      anonymous: false
 ```
 
 Sample shape:
@@ -431,12 +440,12 @@ Purpose:
 
 Config fields:
 
-- optional: `name`
-- optional: `limit`
-- optional: `branch`
-- optional: `event`
-- optional: `status`
-- optional: `actor`
+- optional top-level: `name`
+- optional in `params`: `limit`
+- optional in `params`: `branch`
+- optional in `params`: `event`
+- optional in `params`: `status`
+- optional in `params`: `actor`
 
 Rules:
 
@@ -450,9 +459,10 @@ Example declaration:
 contexts:
   - name: recent_workflow_runs
     type: workflow_runs
-    limit: 5
-    branch: main
-    status: completed
+    params:
+      limit: 5
+      branch: main
+      status: completed
 ```
 
 Sample shape:

@@ -7,41 +7,6 @@ use serde_json::{Map, Value};
 use crate::error::{GhrgError, Result};
 use crate::github::RepositoryBase;
 
-macro_rules! dispatch_provider {
-    ($provider:expr, $method:ident $(, $arg:expr )* ) => {
-        match $provider {
-            ContextProvider::Properties(v) => v.$method($($arg),*),
-            ContextProvider::Branches(v) => v.$method($($arg),*),
-            ContextProvider::Commits(v) => v.$method($($arg),*),
-            ContextProvider::Languages(v) => v.$method($($arg),*),
-            ContextProvider::Files(v) => v.$method($($arg),*),
-            ContextProvider::Contributors(v) => v.$method($($arg),*),
-            ContextProvider::WorkflowRuns(v) => v.$method($($arg),*),
-        }
-    };
-}
-
-macro_rules! dispatch_provider_async {
-    ($provider:expr, $method:ident $(, $arg:expr )* ) => {
-        match $provider {
-            ContextProvider::Properties(v) => v.$method($($arg),*).await,
-            ContextProvider::Branches(v) => v.$method($($arg),*).await,
-            ContextProvider::Commits(v) => v.$method($($arg),*).await,
-            ContextProvider::Languages(v) => v.$method($($arg),*).await,
-            ContextProvider::Files(v) => v.$method($($arg),*).await,
-            ContextProvider::Contributors(v) => v.$method($($arg),*).await,
-            ContextProvider::WorkflowRuns(v) => v.$method($($arg),*).await,
-        }
-    };
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ContextBase {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 #[serde(bound(serialize = "T: Serialize", deserialize = "T: serde::Deserialize<'de>"))]
@@ -67,31 +32,14 @@ pub struct DynamicContextData<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
 #[serde(deny_unknown_fields)]
-pub enum ContextProvider {
-    #[serde(rename = "properties")]
-    Properties(repo::properties::RepoPropertiesContext),
-    #[serde(rename = "branches")]
-    Branches(repo::branches::RepoBranchesContext),
-    #[serde(rename = "commits")]
-    Commits(repo::commits::RepoCommitsContext),
-    #[serde(rename = "languages")]
-    Languages(repo::languages::RepoLanguagesContext),
-    #[serde(rename = "files")]
-    Files(repo::files::RepoFilesContext),
-    #[serde(rename = "contributors")]
-    Contributors(repo::contributors::RepoContributorsContext),
-    #[serde(rename = "workflow_runs")]
-    WorkflowRuns(repo::workflow_runs::RepoWorkflowRunsContext),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ContextSpec {
-    #[serde(flatten)]
-    pub base: ContextBase,
-    #[serde(flatten)]
-    pub provider: ContextProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub params: Map<String, Value>,
 }
 
 impl<'a> DynamicContextData<'a> {
@@ -136,9 +84,8 @@ impl<'a> DynamicContextData<'a> {
             return Some(Value::Object(self.meta_policies.clone()));
         }
 
-        let Some(remainder) = source.strip_prefix("meta.policies.") else {
-            return None;
-        };
+        let remainder = source.strip_prefix("meta.policies.")?;
+
         if remainder.is_empty() {
             return Some(Value::Object(self.meta_policies.clone()));
         }
@@ -270,24 +217,24 @@ where
 
 impl ContextSpec {
     pub fn input_key(&self) -> &str {
-        self.base.name.as_deref().unwrap_or(self.kind())
+        self.name.as_deref().unwrap_or(self.kind())
     }
 
     pub fn kind(&self) -> &str {
-        self.provider.kind()
+        &self.kind
     }
 
     pub fn validate(&self) -> std::result::Result<(), String> {
-        self.provider.validate()
+        repo::validate_context_spec(self)
     }
 
     pub fn render(&self) -> String {
-        let label = if let Some(name) = &self.base.name {
+        let label = if let Some(name) = &self.name {
             format!("{} as {}", self.kind(), name)
         } else {
             self.kind().to_string()
         };
-        let params = self.provider.render_params();
+        let params = repo::render_context_params(self).unwrap_or_else(|_| String::new());
         if params.is_empty() {
             label
         } else {
@@ -296,14 +243,11 @@ impl ContextSpec {
     }
 
     pub fn sample_value(&self, seed: &repo::SampleRepoSeed) -> serde_json::Value {
-        self.provider.sample_value(seed)
+        repo::sample_context_value(self, seed).unwrap_or(Value::Null)
     }
 
     pub fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
-        Ok(Self {
-            base: self.base.clone(),
-            provider: self.provider.resolve_dynamic(runtime)?,
-        })
+        repo::resolve_dynamic_context_spec(self, runtime)
     }
 
     pub async fn resolve_for_repo<T>(
@@ -312,70 +256,13 @@ impl ContextSpec {
         repo: &RepositoryBase,
     ) -> Result<serde_json::Value>
     where
-        T: repo::ResolveRepoContext + Sync,
+        T: crate::github::RepoDataSource + Sync,
     {
-        self.provider.resolve_for_repo(client, repo).await
-    }
-}
-
-impl ContextProvider {
-    pub fn kind(&self) -> &str {
-        match self {
-            ContextProvider::Properties(_) => repo::properties::KIND,
-            ContextProvider::Branches(_) => repo::branches::KIND,
-            ContextProvider::Commits(_) => repo::commits::KIND,
-            ContextProvider::Languages(_) => repo::languages::KIND,
-            ContextProvider::Files(_) => repo::files::KIND,
-            ContextProvider::Contributors(_) => repo::contributors::KIND,
-            ContextProvider::WorkflowRuns(_) => repo::workflow_runs::KIND,
-        }
+        repo::resolve_context_for_repo(client, repo, self).await
     }
 
-    pub fn validate(&self) -> std::result::Result<(), String> {
-        dispatch_provider!(self, validate)
-    }
-
-    pub fn render_params(&self) -> String {
-        dispatch_provider!(self, render_params)
-    }
-
-    pub fn sample_value(&self, seed: &repo::SampleRepoSeed) -> serde_json::Value {
-        dispatch_provider!(self, sample_value, seed)
-    }
-
-    pub fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
-        match self {
-            ContextProvider::Properties(v) => {
-                Ok(ContextProvider::Properties(v.resolve_dynamic(runtime)?))
-            }
-            ContextProvider::Branches(v) => {
-                Ok(ContextProvider::Branches(v.resolve_dynamic(runtime)?))
-            }
-            ContextProvider::Commits(v) => {
-                Ok(ContextProvider::Commits(v.resolve_dynamic(runtime)?))
-            }
-            ContextProvider::Languages(v) => {
-                Ok(ContextProvider::Languages(v.resolve_dynamic(runtime)?))
-            }
-            ContextProvider::Files(v) => Ok(ContextProvider::Files(v.resolve_dynamic(runtime)?)),
-            ContextProvider::Contributors(v) => {
-                Ok(ContextProvider::Contributors(v.resolve_dynamic(runtime)?))
-            }
-            ContextProvider::WorkflowRuns(v) => {
-                Ok(ContextProvider::WorkflowRuns(v.resolve_dynamic(runtime)?))
-            }
-        }
-    }
-
-    pub async fn resolve_for_repo<T>(
-        &self,
-        client: &T,
-        repo: &RepositoryBase,
-    ) -> Result<serde_json::Value>
-    where
-        T: repo::ResolveRepoContext + Sync,
-    {
-        dispatch_provider_async!(self, resolve, client, repo)
+    pub fn same_provider(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.params == other.params
     }
 }
 

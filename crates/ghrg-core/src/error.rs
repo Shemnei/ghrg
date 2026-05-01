@@ -132,9 +132,7 @@ pub enum GhrgError {
     InvalidRepositorySelector { value: String },
 
     #[error("invalid context kind `{kind}`")]
-    #[diagnostic(help(
-        "use one of `properties`, `languages`, `branches`, `commits`, `files`, `contributors`, or `workflow_runs`"
-    ))]
+    #[diagnostic(help("run `ghrg contexts repos list` to see supported kinds"))]
     InvalidContextKind { kind: String },
 
     #[error(
@@ -161,6 +159,12 @@ pub enum GhrgError {
         "use a single context definition for that input key, or make the explicit and policy specs match"
     ))]
     ConflictingContextSpec { key: String },
+
+    #[error("invalid `{kind}` context parameters: {details}")]
+    #[diagnostic(help(
+        "move context fields under `params` and ensure their shape matches the context kind schema"
+    ))]
+    InvalidContextParams { kind: String, details: String },
 
     #[error("failed to acquire GitHub auth token: {message}")]
     #[diagnostic(help("check `gh auth status`, `GH_TOKEN`, or `GITHUB_TOKEN`"))]

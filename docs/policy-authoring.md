@@ -159,9 +159,10 @@ description: Project a compact repo summary for local testing
 contexts:
   - name: repo_properties
     type: properties
-    names:
-      - Team
-      - CostCenter
+    params:
+      names:
+        - Team
+        - CostCenter
 ```
 
 ## Named contexts
@@ -174,9 +175,10 @@ Example:
 contexts:
   - name: repo_properties
     type: properties
-    names:
-      - Team
-      - CodeOwner
+    params:
+      names:
+        - Team
+        - CodeOwner
 ```
 
 That context is available in Rego as:
@@ -207,9 +209,10 @@ Example:
 contexts:
   - name: repo_properties
     type: properties
-    names:
-      - Team
-      - CodeOwner
+    params:
+      names:
+        - Team
+        - CodeOwner
 ```
 
 During `ghrg repos`, requested contexts are fetched from GitHub and attached under `input.contexts`.
@@ -225,7 +228,8 @@ Static:
 ```yaml
 contexts:
   - type: commits
-    limit: 5
+    params:
+      limit: 5
 ```
 
 Dynamic:
@@ -234,12 +238,13 @@ Dynamic:
 contexts:
   - name: recent_commits
     type: commits
-    limit:
-      from: input.max_commit_limit
-      default: 5
-    ref:
-      from: env.GHRG_REF
-      default: main
+    params:
+      limit:
+        from: input.max_commit_limit
+        default: 5
+      ref:
+        from: env.GHRG_REF
+        default: main
 ```
 
 Reference shape:

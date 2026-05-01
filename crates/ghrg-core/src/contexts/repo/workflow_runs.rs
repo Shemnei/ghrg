@@ -3,13 +3,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::contexts::{
-    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
-    resolve_optional_context_value,
+    ContextSpec, ContextValue, DynamicContextData, resolve_optional_context_value,
 };
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 
-use super::{RepoContextCatalogEntry, RepoContextFieldDoc, SampleRepoSeed};
+use super::{RepoContextCatalogEntry, RepoContextFieldDoc, RepoContextResolver, SampleRepoSeed};
 
 pub const KIND: &str = "workflow_runs";
 
@@ -60,33 +59,29 @@ pub const CATALOG_ENTRY: RepoContextCatalogEntry = RepoContextCatalogEntry {
 };
 
 pub fn example_spec(_default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some("recent_workflow_runs".to_string()),
-        },
-        provider: ContextProvider::WorkflowRuns(RepoWorkflowRunsContext {
+    spec(
+        Some("recent_workflow_runs"),
+        &RepoWorkflowRunsContext {
             limit: Some(5.into()),
             branch: Some("main".to_string().into()),
             event: None,
             status: Some("completed".to_string().into()),
             actor: None,
-        }),
-    }
+        },
+    )
 }
 
 pub fn explicit_spec(default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some(KIND.to_string()),
-        },
-        provider: ContextProvider::WorkflowRuns(RepoWorkflowRunsContext {
+    spec(
+        Some(KIND),
+        &RepoWorkflowRunsContext {
             limit: Some(5.into()),
             branch: Some(default_branch.to_string().into()),
             event: Some("push".to_string().into()),
             status: Some("completed".to_string().into()),
             actor: None,
-        }),
-    }
+        },
+    )
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -274,64 +269,34 @@ impl RepoWorkflowRunsContext {
         })
     }
 
-    pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
-    where
-        T: ResolveRepoWorkflowRuns + Sync,
-    {
-        client.resolve_repo_workflow_runs(repo, self).await
-    }
-}
-
-#[async_trait]
-pub trait ResolveRepoWorkflowRuns {
-    async fn resolve_repo_workflow_runs(
+    pub async fn resolve(
         &self,
+        client: &dyn RepoDataSource,
         repo: &RepositoryBase,
-        context: &RepoWorkflowRunsContext,
-    ) -> Result<Value>;
-}
-
-#[async_trait]
-impl<T> ResolveRepoWorkflowRuns for T
-where
-    T: RepoDataSource + Sync,
-{
-    async fn resolve_repo_workflow_runs(
-        &self,
-        repo: &RepositoryBase,
-        context: &RepoWorkflowRunsContext,
     ) -> Result<Value> {
-        let rows = self
+        let rows = client
             .fetch_repo_workflow_runs(
                 &repo.owner,
                 &repo.name,
                 &RepoWorkflowRunsQuery {
-                    limit: context
+                    limit: self
                         .limit
                         .as_ref()
                         .and_then(ContextValue::literal)
                         .copied()
                         .map(|value| value.clamp(1, 100) as u8),
-                    branch: context
+                    branch: self
                         .branch
                         .as_ref()
                         .and_then(ContextValue::literal)
                         .cloned(),
-                    event: context
-                        .event
-                        .as_ref()
-                        .and_then(ContextValue::literal)
-                        .cloned(),
-                    status: context
+                    event: self.event.as_ref().and_then(ContextValue::literal).cloned(),
+                    status: self
                         .status
                         .as_ref()
                         .and_then(ContextValue::literal)
                         .cloned(),
-                    actor: context
-                        .actor
-                        .as_ref()
-                        .and_then(ContextValue::literal)
-                        .cloned(),
+                    actor: self.actor.as_ref().and_then(ContextValue::literal).cloned(),
                 },
             )
             .await?;
@@ -339,9 +304,89 @@ where
     }
 }
 
+pub struct WorkflowRunsResolver;
+pub static RESOLVER: WorkflowRunsResolver = WorkflowRunsResolver;
+
+#[async_trait]
+impl RepoContextResolver for WorkflowRunsResolver {
+    fn validate_params(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<(), String> {
+        parse_params(params)?.validate()
+    }
+
+    fn render_params(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<String, String> {
+        Ok(parse_params(params)?.render_params())
+    }
+
+    fn sample_value(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+        seed: &SampleRepoSeed,
+    ) -> std::result::Result<serde_json::Value, String> {
+        Ok(parse_params(params)?.sample_value(seed))
+    }
+
+    fn resolve_dynamic(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+        runtime: &DynamicContextData<'_>,
+    ) -> std::result::Result<serde_json::Map<String, serde_json::Value>, crate::error::GhrgError>
+    {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        let resolved = context.resolve_dynamic(runtime)?;
+        Ok(to_params(&resolved))
+    }
+
+    async fn resolve(
+        &self,
+        client: &dyn RepoDataSource,
+        repo: &RepositoryBase,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<serde_json::Value, crate::error::GhrgError> {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        context.resolve(client, repo).await
+    }
+}
+
 fn render_param<T: std::fmt::Display>(name: &str) -> impl FnOnce(&ContextValue<T>) -> String + '_ {
     move |value| match value {
         ContextValue::Literal(value) => format!("{name}={value}"),
         ContextValue::Ref(reference) => format!("{name}<-{}", reference.from),
+    }
+}
+
+fn parse_params(
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<RepoWorkflowRunsContext, String> {
+    serde_json::from_value(Value::Object(params.clone())).map_err(|error| error.to_string())
+}
+
+fn to_params(context: &RepoWorkflowRunsContext) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::to_value(context)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn spec(name: Option<&str>, context: &RepoWorkflowRunsContext) -> ContextSpec {
+    ContextSpec {
+        name: name.map(ToString::to_string),
+        kind: KIND.to_string(),
+        params: to_params(context),
     }
 }

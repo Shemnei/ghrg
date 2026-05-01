@@ -156,7 +156,7 @@ impl RepositoryPolicyInput {
 }
 
 #[async_trait]
-pub trait RepoDataSource: Clone + Send + Sync {
+pub trait RepoDataSource: Send + Sync {
     async fn fetch_repo(&self, owner: &str, name: &str) -> Result<RepositoryBase>;
     async fn list_repos(
         &self,

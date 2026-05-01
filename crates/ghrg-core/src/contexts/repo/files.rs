@@ -3,13 +3,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::contexts::{
-    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
-    resolve_optional_context_value,
+    ContextSpec, ContextValue, DynamicContextData, resolve_optional_context_value,
 };
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 
-use super::{RepoContextCatalogEntry, RepoContextFieldDoc, SampleRepoSeed};
+use super::{RepoContextCatalogEntry, RepoContextFieldDoc, RepoContextResolver, SampleRepoSeed};
 
 pub const KIND: &str = "files";
 
@@ -57,31 +56,27 @@ pub const CATALOG_ENTRY: RepoContextCatalogEntry = RepoContextCatalogEntry {
 };
 
 pub fn example_spec(default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some("workflow_files".to_string()),
-        },
-        provider: ContextProvider::Files(RepoFilesContext {
+    spec(
+        Some("workflow_files"),
+        &RepoFilesContext {
             glob: Some(".github/workflows/*.yml".to_string().into()),
             limit: Some(5.into()),
             reference: Some(default_branch.to_string().into()),
             include_content: false.into(),
-        }),
-    }
+        },
+    )
 }
 
 pub fn explicit_spec(default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some(KIND.to_string()),
-        },
-        provider: ContextProvider::Files(RepoFilesContext {
+    spec(
+        Some(KIND),
+        &RepoFilesContext {
             glob: Some("src/**".to_string().into()),
             limit: Some(5.into()),
             reference: Some(default_branch.to_string().into()),
             include_content: false.into(),
-        }),
-    }
+        },
+    )
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -232,59 +227,92 @@ impl RepoFilesContext {
         })
     }
 
-    pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
-    where
-        T: ResolveRepoFiles + Sync,
-    {
-        client.resolve_repo_files(repo, self).await
-    }
-}
-
-#[async_trait]
-pub trait ResolveRepoFiles {
-    async fn resolve_repo_files(
+    pub async fn resolve(
         &self,
+        client: &dyn RepoDataSource,
         repo: &RepositoryBase,
-        context: &RepoFilesContext,
-    ) -> Result<Value>;
-}
-
-#[async_trait]
-impl<T> ResolveRepoFiles for T
-where
-    T: RepoDataSource + Sync,
-{
-    async fn resolve_repo_files(
-        &self,
-        repo: &RepositoryBase,
-        context: &RepoFilesContext,
     ) -> Result<Value> {
         let mut query = RepoFilesQuery {
-            limit: context
+            limit: self
                 .limit
                 .as_ref()
                 .and_then(ContextValue::literal)
                 .copied()
                 .map(|value| value.clamp(1, 500) as u16),
-            glob: context
-                .glob
-                .as_ref()
-                .and_then(ContextValue::literal)
-                .cloned(),
-            reference: context
+            glob: self.glob.as_ref().and_then(ContextValue::literal).cloned(),
+            reference: self
                 .reference
                 .as_ref()
                 .and_then(ContextValue::literal)
                 .cloned(),
-            include_content: context.include_content.literal().copied().unwrap_or(false),
+            include_content: self.include_content.literal().copied().unwrap_or(false),
         };
         if query.reference.is_none() {
             query.reference = Some(repo.default_branch.clone());
         }
-        let rows = self
+        let rows = client
             .fetch_repo_files(&repo.owner, &repo.name, &query)
             .await?;
         serde_json::to_value(rows).map_err(Into::into)
+    }
+}
+
+pub struct FilesResolver;
+pub static RESOLVER: FilesResolver = FilesResolver;
+
+#[async_trait]
+impl RepoContextResolver for FilesResolver {
+    fn validate_params(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<(), String> {
+        parse_params(params)?.validate()
+    }
+
+    fn render_params(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<String, String> {
+        Ok(parse_params(params)?.render_params())
+    }
+
+    fn sample_value(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+        seed: &SampleRepoSeed,
+    ) -> std::result::Result<serde_json::Value, String> {
+        Ok(parse_params(params)?.sample_value(seed))
+    }
+
+    fn resolve_dynamic(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+        runtime: &DynamicContextData<'_>,
+    ) -> std::result::Result<serde_json::Map<String, serde_json::Value>, crate::error::GhrgError>
+    {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        let resolved = context.resolve_dynamic(runtime)?;
+        Ok(to_params(&resolved))
+    }
+
+    async fn resolve(
+        &self,
+        client: &dyn RepoDataSource,
+        repo: &RepositoryBase,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<serde_json::Value, crate::error::GhrgError> {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        context.resolve(client, repo).await
     }
 }
 
@@ -296,6 +324,27 @@ fn render_param<T: std::fmt::Display>(name: &str) -> impl FnOnce(&ContextValue<T
     move |value| match value {
         ContextValue::Literal(value) => format!("{name}={value}"),
         ContextValue::Ref(reference) => format!("{name}<-{}", reference.from),
+    }
+}
+
+fn parse_params(
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<RepoFilesContext, String> {
+    serde_json::from_value(Value::Object(params.clone())).map_err(|error| error.to_string())
+}
+
+fn to_params(context: &RepoFilesContext) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::to_value(context)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn spec(name: Option<&str>, context: &RepoFilesContext) -> ContextSpec {
+    ContextSpec {
+        name: name.map(ToString::to_string),
+        kind: KIND.to_string(),
+        params: to_params(context),
     }
 }
 
@@ -311,8 +360,8 @@ fn sample_paths(glob: Option<&str>, count: usize) -> Vec<String> {
         let matches = candidate_paths
             .iter()
             .filter(|path| matcher.is_match(path))
-            .cloned()
             .take(count)
+            .cloned()
             .collect::<Vec<_>>();
 
         if !matches.is_empty() {

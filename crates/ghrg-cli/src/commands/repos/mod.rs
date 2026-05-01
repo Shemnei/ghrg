@@ -639,12 +639,12 @@ mod tests {
         let second = dir.join("second.rego");
         fs::write(
             &first,
-            "# ```ghrg\n# contexts:\n#   - type: properties\n#     names: [\"Team\"]\n# ```\n\npackage ghrg.repos\n\ndefault allow := false\nallow if { false }\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: properties\n#     params:\n#       names: [\"Team\"]\n# ```\n\npackage ghrg.repos\n\ndefault allow := false\nallow if { false }\noutput := input\n",
         )
         .unwrap();
         fs::write(
             &second,
-            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit: 1\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     params:\n#       limit: 1\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
         )
         .unwrap();
 

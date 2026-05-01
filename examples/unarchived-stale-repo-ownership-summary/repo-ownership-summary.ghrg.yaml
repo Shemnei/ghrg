@@ -3,6 +3,7 @@ description: Emit repo name, Team, CodeOwner, public visibility, and last update
 contexts:
   - name: repo_properties
     type: properties
-    names:
-      - Team
-      - CodeOwner
+    params:
+      names:
+        - Team
+        - CodeOwner

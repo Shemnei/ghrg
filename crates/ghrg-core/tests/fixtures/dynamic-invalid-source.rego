@@ -1,8 +1,9 @@
 # ```ghrg
 # contexts:
 #   - type: commits
-#     limit:
-#       from: previous.limit
+#     params:
+#       limit:
+#         from: previous.limit
 # ```
 
 package ghrg.repos

@@ -3,13 +3,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::contexts::{
-    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
-    resolve_optional_context_value,
+    ContextSpec, ContextValue, DynamicContextData, resolve_optional_context_value,
 };
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 
-use super::{RepoContextCatalogEntry, RepoContextFieldDoc, SampleRepoSeed};
+use super::{RepoContextCatalogEntry, RepoContextFieldDoc, RepoContextResolver, SampleRepoSeed};
 
 pub const KIND: &str = "branches";
 
@@ -44,27 +43,23 @@ pub const CATALOG_ENTRY: RepoContextCatalogEntry = RepoContextCatalogEntry {
 };
 
 pub fn example_spec(_default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some("protected_branches".to_string()),
-        },
-        provider: ContextProvider::Branches(RepoBranchesContext {
+    spec(
+        Some("protected_branches"),
+        &RepoBranchesContext {
             limit: Some(3.into()),
             protected: Some(true.into()),
-        }),
-    }
+        },
+    )
 }
 
 pub fn explicit_spec(_default_branch: &str) -> ContextSpec {
-    ContextSpec {
-        base: ContextBase {
-            name: Some(KIND.to_string()),
-        },
-        provider: ContextProvider::Branches(RepoBranchesContext {
+    spec(
+        Some(KIND),
+        &RepoBranchesContext {
             limit: Some(5.into()),
             protected: Some(true.into()),
-        }),
-    }
+        },
+    )
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -165,45 +160,23 @@ impl RepoBranchesContext {
         })
     }
 
-    pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
-    where
-        T: ResolveRepoBranches + Sync,
-    {
-        client.resolve_repo_branches(repo, self).await
-    }
-}
-
-#[async_trait]
-pub trait ResolveRepoBranches {
-    async fn resolve_repo_branches(
+    pub async fn resolve(
         &self,
+        client: &dyn RepoDataSource,
         repo: &RepositoryBase,
-        context: &RepoBranchesContext,
-    ) -> Result<Value>;
-}
-
-#[async_trait]
-impl<T> ResolveRepoBranches for T
-where
-    T: RepoDataSource + Sync,
-{
-    async fn resolve_repo_branches(
-        &self,
-        repo: &RepositoryBase,
-        context: &RepoBranchesContext,
     ) -> Result<Value> {
-        let rows = self
+        let rows = client
             .fetch_repo_branches(
                 &repo.owner,
                 &repo.name,
                 &RepoBranchesQuery {
-                    limit: context
+                    limit: self
                         .limit
                         .as_ref()
                         .and_then(ContextValue::literal)
                         .copied()
                         .map(|value| value.clamp(1, 100) as u8),
-                    protected: context
+                    protected: self
                         .protected
                         .as_ref()
                         .and_then(ContextValue::literal)
@@ -212,6 +185,86 @@ where
             )
             .await?;
         serde_json::to_value(rows).map_err(Into::into)
+    }
+}
+
+pub struct BranchesResolver;
+pub static RESOLVER: BranchesResolver = BranchesResolver;
+
+#[async_trait]
+impl RepoContextResolver for BranchesResolver {
+    fn validate_params(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<(), String> {
+        parse_params(params)?.validate()
+    }
+
+    fn render_params(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<String, String> {
+        Ok(parse_params(params)?.render_params())
+    }
+
+    fn sample_value(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+        seed: &SampleRepoSeed,
+    ) -> std::result::Result<serde_json::Value, String> {
+        Ok(parse_params(params)?.sample_value(seed))
+    }
+
+    fn resolve_dynamic(
+        &self,
+        params: &serde_json::Map<String, serde_json::Value>,
+        runtime: &DynamicContextData<'_>,
+    ) -> std::result::Result<serde_json::Map<String, serde_json::Value>, crate::error::GhrgError>
+    {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        let resolved = context.resolve_dynamic(runtime)?;
+        Ok(to_params(&resolved))
+    }
+
+    async fn resolve(
+        &self,
+        client: &dyn RepoDataSource,
+        repo: &RepositoryBase,
+        params: &serde_json::Map<String, serde_json::Value>,
+    ) -> std::result::Result<serde_json::Value, crate::error::GhrgError> {
+        let context = parse_params(params).map_err(|details| {
+            crate::error::GhrgError::InvalidContextParams {
+                kind: KIND.to_string(),
+                details,
+            }
+        })?;
+        context.resolve(client, repo).await
+    }
+}
+
+fn parse_params(
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<RepoBranchesContext, String> {
+    serde_json::from_value(Value::Object(params.clone())).map_err(|error| error.to_string())
+}
+
+fn to_params(context: &RepoBranchesContext) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::to_value(context)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn spec(name: Option<&str>, context: &RepoBranchesContext) -> ContextSpec {
+    ContextSpec {
+        name: name.map(ToString::to_string),
+        kind: KIND.to_string(),
+        params: to_params(context),
     }
 }
 

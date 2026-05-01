@@ -3,7 +3,8 @@ description: Extend the Renovate config check with a minimumReleaseAge threshold
 contexts:
   - name: selected_renovate_config
     type: files
-    glob:
-      from: input.RenovateConfigPath
-      default: "__no_renovate_config__"
-    include_content: true
+    params:
+      glob:
+        from: input.RenovateConfigPath
+        default: "__no_renovate_config__"
+      include_content: true

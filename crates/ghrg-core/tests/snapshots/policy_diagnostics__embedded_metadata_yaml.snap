@@ -1,14 +1,15 @@
 ---
 source: crates/ghrg-core/tests/policy_diagnostics.rs
+assertion_line: 28
 expression: render_diagnostic(&error)
 ---
-  x failed to parse embedded metadata in `$CARGO_MANIFEST_DIR/tests/fixtures/bad-frontmatter.rego`: did not find expected node content at line 5 column 1, while parsing a flow node
-  `-> did not find expected node content at line 5 column 1, while parsing a flow node
-   ,-[$CARGO_MANIFEST_DIR/tests/fixtures/bad-frontmatter.rego:6:1]
- 5 | #     limit: [
- 6 | # ```
+  x failed to parse embedded metadata in `$CARGO_MANIFEST_DIR/tests/fixtures/bad-frontmatter.rego`: did not find expected node content at line 6 column 1, while parsing a flow node
+  `-> did not find expected node content at line 6 column 1, while parsing a flow node
+   ,-[$CARGO_MANIFEST_DIR/tests/fixtures/bad-frontmatter.rego:7:1]
+ 6 | #       limit: [
+ 7 | # ```
    : |
    : `-- invalid YAML in embedded metadata
- 7 | 
+ 8 | 
    `----
   help: fix the YAML inside the `# ```ghrg` block

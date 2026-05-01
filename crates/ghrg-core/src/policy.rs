@@ -9,9 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub use crate::contexts::{
-    ContextBase, ContextProvider, ContextSpec, ContextValue, ContextValueRef, DynamicContextData,
-};
+pub use crate::contexts::{ContextSpec, ContextValue, ContextValueRef, DynamicContextData};
 
 use crate::error::{GhrgError, Result};
 
@@ -203,7 +201,7 @@ impl Engine<Finished> {
         let mut keep = true;
         let mut dropped_by = None;
         let mut steps = Vec::new();
-        let mut context_cache = Vec::<(ContextProvider, Value)>::new();
+        let mut context_cache = Vec::<(ContextSpec, Value)>::new();
         let mut meta_last = None::<Value>;
         let mut meta_policies = Map::<String, Value>::new();
 
@@ -622,7 +620,7 @@ async fn resolve_policy_contexts<R>(
     resolver: &R,
     input: &Value,
     requests: &[ContextRequest],
-    cache: &mut Vec<(ContextProvider, Value)>,
+    cache: &mut Vec<(ContextSpec, Value)>,
 ) -> Result<Map<String, Value>>
 where
     R: ContextResolver,
@@ -632,7 +630,7 @@ where
         let resolved = resolver.resolve(input, &missing).await?;
         for request in &missing {
             if let Some(value) = resolved.get(&request.key) {
-                cache.push((request.spec.provider.clone(), value.clone()));
+                cache.push((request.spec.clone(), value.clone()));
             }
         }
     }
@@ -641,7 +639,7 @@ where
     for request in requests {
         if let Some((_, value)) = cache
             .iter()
-            .find(|(provider, _)| *provider == request.spec.provider)
+            .find(|(spec, _)| spec.same_provider(&request.spec))
         {
             contexts.insert(request.key.clone(), value.clone());
         }
@@ -652,17 +650,17 @@ where
 
 fn missing_context_requests(
     requests: &[ContextRequest],
-    cache: &[(ContextProvider, Value)],
+    cache: &[(ContextSpec, Value)],
 ) -> Vec<ContextRequest> {
     let mut missing = Vec::new();
 
     for request in requests {
         if cache
             .iter()
-            .any(|(provider, _)| *provider == request.spec.provider)
+            .any(|(spec, _)| spec.same_provider(&request.spec))
             || missing
                 .iter()
-                .any(|existing: &ContextRequest| existing.spec.provider == request.spec.provider)
+                .any(|existing: &ContextRequest| existing.spec.same_provider(&request.spec))
         {
             continue;
         }
@@ -841,7 +839,7 @@ fn validate_context_specs(document: &MetadataDocument, contexts: &[ContextSpec])
             ));
         }
 
-        if context.base.name.as_deref().is_some_and(str::is_empty) {
+        if context.name.as_deref().is_some_and(str::is_empty) {
             return Err(metadata_field_error(
                 document,
                 "contexts",
@@ -1135,7 +1133,8 @@ mod tests {
     }
 
     fn context_descriptor(request: &ContextRequest) -> String {
-        let params = request.spec.provider.render_params();
+        let params = crate::contexts::repo::render_context_params(&request.spec)
+            .unwrap_or_else(|_| String::new());
         if params.is_empty() {
             request.spec.kind().to_string()
         } else {
@@ -1148,16 +1147,13 @@ mod tests {
         let source = PolicySource {
             path: PathBuf::from("test.rego"),
             package: Some("ghrg.repos".to_string()),
-            source: "# ```ghrg\n# name: sample\n# contexts:\n#   - name: recent_commits\n#     type: commits\n#     limit: 1\n# ```\n\npackage ghrg.repos\n".to_string(),
+            source: "# ```ghrg\n# name: sample\n# contexts:\n#   - name: recent_commits\n#     type: commits\n#     params:\n#       limit: 1\n# ```\n\npackage ghrg.repos\n".to_string(),
         };
 
         let metadata = parse_embedded_metadata(&source).unwrap().unwrap();
         assert_eq!(metadata.name.as_deref(), Some("sample"));
         assert_eq!(metadata.contexts[0].kind(), "commits");
-        assert_eq!(
-            metadata.contexts[0].base.name.as_deref(),
-            Some("recent_commits")
-        );
+        assert_eq!(metadata.contexts[0].name.as_deref(), Some("recent_commits"));
     }
 
     #[test]
@@ -1308,7 +1304,7 @@ mod tests {
         .unwrap();
         fs::write(
             &enrich,
-            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit: 1\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"name\": input.name, \"team\": input.team}\n",
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     params:\n#       limit: 1\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"name\": input.name, \"team\": input.team}\n",
         )
         .unwrap();
 
@@ -1407,12 +1403,12 @@ mod tests {
         let second = temp_dir.join("second.rego");
         fs::write(
             &first,
-            "# ```ghrg\n# contexts:\n#   - name: shared\n#     type: commits\n#     limit: 1\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"first\": input.contexts.shared}\n",
+            "# ```ghrg\n# contexts:\n#   - name: shared\n#     type: commits\n#     params:\n#       limit: 1\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"first\": input.contexts.shared}\n",
         )
         .unwrap();
         fs::write(
             &second,
-            "# ```ghrg\n# contexts:\n#   - name: shared\n#     type: commits\n#     limit: 2\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"second\": input.contexts.shared}\n",
+            "# ```ghrg\n# contexts:\n#   - name: shared\n#     type: commits\n#     params:\n#       limit: 2\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"second\": input.contexts.shared}\n",
         )
         .unwrap();
 
@@ -1449,7 +1445,7 @@ mod tests {
         .unwrap();
         fs::write(
             &consume,
-            "# ```ghrg\n# contexts:\n#   - name: recent\n#     type: commits\n#     limit:\n#       from: meta.policies.seed_meta.commit_limit\n#     author:\n#       from: env.PATH\n#     ref:\n#       from: input.default_branch\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"recent\": input.contexts.recent}\n",
+            "# ```ghrg\n# contexts:\n#   - name: recent\n#     type: commits\n#     params:\n#       limit:\n#         from: meta.policies.seed_meta.commit_limit\n#       author:\n#         from: env.PATH\n#       ref:\n#         from: input.default_branch\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"recent\": input.contexts.recent}\n",
         )
         .unwrap();
 
@@ -1477,7 +1473,7 @@ mod tests {
 
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit:\n#       from: input.missing_limit\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     params:\n#       limit:\n#         from: input.missing_limit\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
         )
         .unwrap();
 
@@ -1506,7 +1502,7 @@ mod tests {
 
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit:\n#       from: input.missing_limit\n#       default: 4\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     params:\n#       limit:\n#         from: input.missing_limit\n#         default: 4\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
         )
         .unwrap();
 
@@ -1531,7 +1527,7 @@ mod tests {
 
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit:\n#       from: env.GHRG_TEST_DYNAMIC_LIMIT\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     params:\n#       limit:\n#         from: env.GHRG_TEST_DYNAMIC_LIMIT\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
         )
         .unwrap();
 
@@ -1579,7 +1575,7 @@ mod tests {
         let policy = temp_dir.join("sample.rego");
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: files\n#     glob: src/**\n#     limit: 25\n#     ref: main\n# ```\n\npackage ghrg.repos\n",
+            "# ```ghrg\n# contexts:\n#   - type: files\n#     params:\n#       glob: src/**\n#       limit: 25\n#       ref: main\n# ```\n\npackage ghrg.repos\n",
         )
         .unwrap();
 
@@ -1593,7 +1589,7 @@ mod tests {
         let policy = temp_dir.join("sample.rego");
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: files\n#     mode: bad\n# ```\n\npackage ghrg.repos\n",
+            "# ```ghrg\n# contexts:\n#   - type: files\n#     params:\n#       mode: bad\n# ```\n\npackage ghrg.repos\n",
         )
         .unwrap();
 
@@ -1637,7 +1633,7 @@ mod tests {
         let policy = temp_dir.join("sample.rego");
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: branches\n#     limit: 25\n#     protected: true\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: branches\n#     params:\n#       limit: 25\n#       protected: true\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
         )
         .unwrap();
 
@@ -1651,7 +1647,7 @@ mod tests {
         let policy = temp_dir.join("sample.rego");
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: contributors\n#     limit: 25\n#     anonymous: true\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: contributors\n#     params:\n#       limit: 25\n#       anonymous: true\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
         )
         .unwrap();
 
@@ -1665,7 +1661,7 @@ mod tests {
         let policy = temp_dir.join("sample.rego");
         fs::write(
             &policy,
-            "# ```ghrg\n# contexts:\n#   - type: workflow_runs\n#     limit: 5\n#     branch: main\n#     status: completed\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+            "# ```ghrg\n# contexts:\n#   - type: workflow_runs\n#     params:\n#       limit: 5\n#       branch: main\n#       status: completed\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
         )
         .unwrap();
 
@@ -1701,7 +1697,7 @@ mod tests {
         let source = PolicySource {
             path: PathBuf::from("bad-frontmatter.rego"),
             package: Some("ghrg.repos".to_string()),
-            source: "# ```ghrg\r\n# name: bad\r\n# contexts:\r\n#   - type: commits\r\n#     limit: [\r\n# ```\r\n\r\npackage ghrg.repos\r\n"
+            source: "# ```ghrg\r\n# name: bad\r\n# contexts:\r\n#   - type: commits\r\n#     params:\r\n#       limit: [\r\n# ```\r\n\r\npackage ghrg.repos\r\n"
                 .to_string(),
         };
 

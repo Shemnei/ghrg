@@ -2,7 +2,8 @@
 # name: bad
 # contexts:
 #   - type: commits
-#     limit: [
+#     params:
+#       limit: [
 # ```
 
 package ghrg.repos
