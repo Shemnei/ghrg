@@ -12,6 +12,7 @@ pub fn fixture_path(name: &str) -> PathBuf {
 pub fn render_diagnostic(error: &GhrgError) -> String {
     let mut output = String::new();
     GraphicalReportHandler::new_themed(GraphicalTheme::none())
+        .with_width(200)
         .render_report(&mut output, error)
         .unwrap();
 
