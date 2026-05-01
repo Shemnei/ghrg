@@ -40,6 +40,40 @@ Then in Rego:
 input.contexts.repo_properties.Team
 ```
 
+## Dynamic context configuration
+
+Context fields can use either:
+
+- a literal value (existing behavior)
+- a dynamic reference object with `from` and optional `default`
+
+Example:
+
+```yaml
+contexts:
+  - name: recent_commits
+    type: commits
+    limit:
+      from: input.max_commit_limit
+      default: 5
+    ref:
+      from: env.GHRG_REF
+      default: main
+```
+
+Supported reference roots:
+
+- `input` and `input.<path>`
+- `env.<VAR_NAME>`
+- `meta.last` and `meta.last.<path>`
+- `meta.policies` and `meta.policies.<policy_key>[.<path>]`
+
+Notes:
+
+- if a dynamic source is missing and `default` is not set, evaluation fails
+- `default` must match the target field type
+- policy keys in `meta.policies` resolve by metadata `name` (if present) and policy path
+
 ## Choosing context shapes
 
 - use `properties` for custom ownership or governance metadata

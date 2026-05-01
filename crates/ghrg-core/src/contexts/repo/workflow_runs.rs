@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::contexts::{ContextBase, ContextProvider, ContextSpec};
+use crate::contexts::{
+    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
+    resolve_optional_context_value,
+};
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 
@@ -62,10 +65,10 @@ pub fn example_spec(_default_branch: &str) -> ContextSpec {
             name: Some("recent_workflow_runs".to_string()),
         },
         provider: ContextProvider::WorkflowRuns(RepoWorkflowRunsContext {
-            limit: Some(5),
-            branch: Some("main".to_string()),
+            limit: Some(5.into()),
+            branch: Some("main".to_string().into()),
             event: None,
-            status: Some("completed".to_string()),
+            status: Some("completed".to_string().into()),
             actor: None,
         }),
     }
@@ -77,10 +80,10 @@ pub fn explicit_spec(default_branch: &str) -> ContextSpec {
             name: Some(KIND.to_string()),
         },
         provider: ContextProvider::WorkflowRuns(RepoWorkflowRunsContext {
-            limit: Some(5),
-            branch: Some(default_branch.to_string()),
-            event: Some("push".to_string()),
-            status: Some("completed".to_string()),
+            limit: Some(5.into()),
+            branch: Some(default_branch.to_string().into()),
+            event: Some("push".to_string().into()),
+            status: Some("completed".to_string().into()),
             actor: None,
         }),
     }
@@ -99,44 +102,99 @@ pub struct RepoWorkflowRunsQuery {
 #[serde(deny_unknown_fields)]
 pub struct RepoWorkflowRunsContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u64>,
+    pub limit: Option<ContextValue<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
+    pub branch: Option<ContextValue<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event: Option<String>,
+    pub event: Option<ContextValue<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
+    pub status: Option<ContextValue<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<String>,
+    pub actor: Option<ContextValue<String>>,
 }
 
 impl RepoWorkflowRunsContext {
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if self.limit.is_some_and(|value| value == 0) {
+        if self.limit.as_ref().and_then(ContextValue::literal) == Some(&0) {
             return Err("`workflow_runs.limit` must be a positive integer".to_string());
         }
+
+        if let Some(limit) = self.limit.as_ref().and_then(ContextValue::default_value)
+            && *limit == 0
+        {
+            return Err("`workflow_runs.limit.default` must be a positive integer".to_string());
+        }
+
+        if let Some(limit) = &self.limit {
+            limit.validate_source("workflow_runs.limit")?;
+        }
+        if let Some(branch) = &self.branch {
+            branch.validate_source("workflow_runs.branch")?;
+        }
+        if let Some(event) = &self.event {
+            event.validate_source("workflow_runs.event")?;
+        }
+        if let Some(status) = &self.status {
+            status.validate_source("workflow_runs.status")?;
+        }
+        if let Some(actor) = &self.actor {
+            actor.validate_source("workflow_runs.actor")?;
+        }
+
         for (field, value) in [
-            ("branch", self.branch.as_deref()),
-            ("event", self.event.as_deref()),
-            ("status", self.status.as_deref()),
-            ("actor", self.actor.as_deref()),
+            (
+                "branch",
+                self.branch.as_ref().and_then(ContextValue::literal),
+            ),
+            ("event", self.event.as_ref().and_then(ContextValue::literal)),
+            (
+                "status",
+                self.status.as_ref().and_then(ContextValue::literal),
+            ),
+            ("actor", self.actor.as_ref().and_then(ContextValue::literal)),
         ] {
-            if value.is_some_and(str::is_empty) {
+            if value.is_some_and(|value| value.is_empty()) {
                 return Err(format!(
                     "`workflow_runs.{field}` must be a non-empty string"
                 ));
             }
         }
+
+        for (field, value) in [
+            (
+                "branch",
+                self.branch.as_ref().and_then(ContextValue::default_value),
+            ),
+            (
+                "event",
+                self.event.as_ref().and_then(ContextValue::default_value),
+            ),
+            (
+                "status",
+                self.status.as_ref().and_then(ContextValue::default_value),
+            ),
+            (
+                "actor",
+                self.actor.as_ref().and_then(ContextValue::default_value),
+            ),
+        ] {
+            if value.is_some_and(|value| value.is_empty()) {
+                return Err(format!(
+                    "`workflow_runs.{field}.default` must be a non-empty string"
+                ));
+            }
+        }
+
         Ok(())
     }
 
     pub fn render_params(&self) -> String {
         [
-            self.limit.map(|value| format!("limit={value}")),
-            self.branch.as_ref().map(|value| format!("branch={value}")),
-            self.event.as_ref().map(|value| format!("event={value}")),
-            self.status.as_ref().map(|value| format!("status={value}")),
-            self.actor.as_ref().map(|value| format!("actor={value}")),
+            self.limit.as_ref().map(render_param("limit")),
+            self.branch.as_ref().map(render_param("branch")),
+            self.event.as_ref().map(render_param("event")),
+            self.status.as_ref().map(render_param("status")),
+            self.actor.as_ref().map(render_param("actor")),
         ]
         .into_iter()
         .flatten()
@@ -145,15 +203,37 @@ impl RepoWorkflowRunsContext {
     }
 
     pub fn sample_value(&self, seed: &SampleRepoSeed) -> Value {
-        let count = self.limit.unwrap_or(3).clamp(1, 5) as usize;
+        let count = self
+            .limit
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or(3)
+            .clamp(1, 5) as usize;
+        let branch = self
+            .branch
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or_else(|| seed.default_branch.clone());
+        let event = self
+            .event
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or_else(|| "push".to_string());
+        let status = self
+            .status
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or_else(|| "completed".to_string());
+        let actor = self
+            .actor
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or_else(|| "octocat".to_string());
+
         Value::Array(
             (0..count)
                 .map(|index| {
                     let run_number = index as u64 + 41;
-                    let status = self
-                        .status
-                        .clone()
-                        .unwrap_or_else(|| "completed".to_string());
                     let conclusion = if status == "completed" {
                         Some(if index % 2 == 0 { "success" } else { "failure" })
                     } else {
@@ -162,14 +242,14 @@ impl RepoWorkflowRunsContext {
                     serde_json::json!({
                         "id": 9000 + index as u64,
                         "name": if index % 2 == 0 { "CI" } else { "Release" },
-                        "event": self.event.clone().unwrap_or_else(|| "push".to_string()),
-                        "status": status,
+                        "event": event.clone(),
+                        "status": status.clone(),
                         "conclusion": conclusion,
-                        "head_branch": self.branch.clone().unwrap_or_else(|| seed.default_branch.clone()),
+                        "head_branch": branch.clone(),
                         "head_sha": format!("{:040x}", index + 301),
                         "run_number": run_number,
                         "run_attempt": 1,
-                        "actor_login": self.actor.clone().unwrap_or_else(|| "octocat".to_string()),
+                        "actor_login": actor.clone(),
                         "html_url": format!("https://github.com/{}/actions/runs/{}", seed.full_name, 9000 + index as u64),
                         "created_at": format!("2026-01-0{}T12:00:00Z", index + 1),
                         "updated_at": format!("2026-01-0{}T12:05:00Z", index + 1),
@@ -177,6 +257,21 @@ impl RepoWorkflowRunsContext {
                 })
                 .collect(),
         )
+    }
+
+    pub fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
+        Ok(Self {
+            limit: resolve_optional_context_value(&self.limit, runtime, "workflow_runs.limit")?
+                .map(ContextValue::from),
+            branch: resolve_optional_context_value(&self.branch, runtime, "workflow_runs.branch")?
+                .map(ContextValue::from),
+            event: resolve_optional_context_value(&self.event, runtime, "workflow_runs.event")?
+                .map(ContextValue::from),
+            status: resolve_optional_context_value(&self.status, runtime, "workflow_runs.status")?
+                .map(ContextValue::from),
+            actor: resolve_optional_context_value(&self.actor, runtime, "workflow_runs.actor")?
+                .map(ContextValue::from),
+        })
     }
 
     pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
@@ -211,14 +306,42 @@ where
                 &repo.owner,
                 &repo.name,
                 &RepoWorkflowRunsQuery {
-                    limit: context.limit.map(|value| value.clamp(1, 100) as u8),
-                    branch: context.branch.clone(),
-                    event: context.event.clone(),
-                    status: context.status.clone(),
-                    actor: context.actor.clone(),
+                    limit: context
+                        .limit
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .copied()
+                        .map(|value| value.clamp(1, 100) as u8),
+                    branch: context
+                        .branch
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .cloned(),
+                    event: context
+                        .event
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .cloned(),
+                    status: context
+                        .status
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .cloned(),
+                    actor: context
+                        .actor
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .cloned(),
                 },
             )
             .await?;
         serde_json::to_value(rows).map_err(Into::into)
+    }
+}
+
+fn render_param<T: std::fmt::Display>(name: &str) -> impl FnOnce(&ContextValue<T>) -> String + '_ {
+    move |value| match value {
+        ContextValue::Literal(value) => format!("{name}={value}"),
+        ContextValue::Ref(reference) => format!("{name}<-{}", reference.from),
     }
 }

@@ -109,8 +109,12 @@ For smaller local experiments:
 - `examples/policies/project-summary.rego`: final projection policy with sidecar metadata
 - `examples/policies/project-summary.ghrg.yaml`: requests the named `repo_properties` context
 - `examples/policies/renovate-config-present.rego`: detects whether Renovate is configured in supported repo locations
-- `examples/policies/renovate-minimum-release-age.rego`: extends the Renovate check with a `minimumReleaseAge > 7 days` policy
+- `examples/policies/renovate-minimum-release-age.rego`: extends the Renovate check with a `minimumReleaseAge > 7 days` policy by consuming the config path from the first policy
+- `examples/policies/dynamic-context-meta-seed.rego`: seeds policy `meta` values consumed by later dynamic context refs
+- `examples/policies/dynamic-context-consumer.rego`: uses contexts resolved from `input`, `env`, and previous policy `meta`
+- `examples/policies/dynamic-context-consumer.ghrg.yaml`: dynamic context declarations using structured `from` references
 - `examples/inputs/repo.json`: local JSON input using the same `repo_properties` key
+- `examples/inputs/repo-dynamic-context.json`: local JSON input for dynamic context examples
 
 The starter projection uses the same title-cased report style as the end-to-end examples while keeping the input small enough for quick local iteration.
 
@@ -124,6 +128,10 @@ ghrg policy test \
   --format json
 ```
 
+In this chain, `renovate-config-present` emits `RenovateConfigPath`, and
+`renovate-minimum-release-age` uses that path as a dynamic files `glob` so it
+only fetches and inspects the selected config file.
+
 Local authoring loop:
 
 ```bash
@@ -132,5 +140,15 @@ ghrg policy test \
   --policy examples/policies/filter-active.rego \
   --policy examples/policies/project-summary.rego \
   --input examples/inputs/repo.json \
+  --format json
+```
+
+Dynamic context chain (uses `input`, `env`, and prior `meta`):
+
+```bash
+GHRG_REF=main ghrg policy test \
+  --policy examples/policies/dynamic-context-meta-seed.rego \
+  --policy examples/policies/dynamic-context-consumer.rego \
+  --input examples/inputs/repo-dynamic-context.json \
   --format json
 ```

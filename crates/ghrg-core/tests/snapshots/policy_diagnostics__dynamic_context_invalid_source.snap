@@ -1,0 +1,13 @@
+---
+source: crates/ghrg-core/tests/policy_diagnostics.rs
+expression: render_diagnostic(&error)
+---
+  x policy metadata validation failed for `$CARGO_MANIFEST_DIR/tests/fixtures/dynamic-invalid-source.rego`: `commits.limit.from` must start with `input`, `env.`, `meta.last`, or `meta.policies`
+   ,-[$CARGO_MANIFEST_DIR/tests/fixtures/dynamic-invalid-source.rego:2:1]
+ 1 | # ```ghrg
+ 2 | # contexts:
+   : ^^^^|^^^^
+   :     `-- invalid policy metadata
+ 3 | #   - type: commits
+   `----
+  help: fix the metadata shape or context parameters before loading the policy

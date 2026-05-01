@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::contexts::{ContextBase, ContextProvider, ContextSpec};
+use crate::contexts::{
+    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
+    resolve_optional_context_value,
+};
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 
@@ -46,8 +49,8 @@ pub fn example_spec(_default_branch: &str) -> ContextSpec {
             name: Some("protected_branches".to_string()),
         },
         provider: ContextProvider::Branches(RepoBranchesContext {
-            limit: Some(3),
-            protected: Some(true),
+            limit: Some(3.into()),
+            protected: Some(true.into()),
         }),
     }
 }
@@ -58,8 +61,8 @@ pub fn explicit_spec(_default_branch: &str) -> ContextSpec {
             name: Some(KIND.to_string()),
         },
         provider: ContextProvider::Branches(RepoBranchesContext {
-            limit: Some(5),
-            protected: Some(true),
+            limit: Some(5.into()),
+            protected: Some(true.into()),
         }),
     }
 }
@@ -74,23 +77,36 @@ pub struct RepoBranchesQuery {
 #[serde(deny_unknown_fields)]
 pub struct RepoBranchesContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u64>,
+    pub limit: Option<ContextValue<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub protected: Option<bool>,
+    pub protected: Option<ContextValue<bool>>,
 }
 
 impl RepoBranchesContext {
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if self.limit.is_some_and(|value| value == 0) {
+        if self.limit.as_ref().and_then(ContextValue::literal) == Some(&0) {
             return Err("`branches.limit` must be a positive integer".to_string());
         }
+        if let Some(limit) = self.limit.as_ref().and_then(ContextValue::default_value)
+            && *limit == 0
+        {
+            return Err("`branches.limit.default` must be a positive integer".to_string());
+        }
+
+        if let Some(limit) = &self.limit {
+            limit.validate_source("branches.limit")?;
+        }
+        if let Some(protected) = &self.protected {
+            protected.validate_source("branches.protected")?;
+        }
+
         Ok(())
     }
 
     pub fn render_params(&self) -> String {
         [
-            self.limit.map(|value| format!("limit={value}")),
-            self.protected.map(|value| format!("protected={value}")),
+            self.limit.as_ref().map(render_param("limit")),
+            self.protected.as_ref().map(render_param("protected")),
         ]
         .into_iter()
         .flatten()
@@ -98,13 +114,22 @@ impl RepoBranchesContext {
         .join(", ")
     }
     pub fn sample_value(&self, seed: &SampleRepoSeed) -> Value {
-        let protected = self.protected.unwrap_or(true);
+        let protected = self
+            .protected
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or(true);
         let names = [
             seed.default_branch.clone(),
             "develop".to_string(),
             "release".to_string(),
         ];
-        let count = self.limit.unwrap_or(3).clamp(1, names.len() as u64) as usize;
+        let count = self
+            .limit
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or(3)
+            .clamp(1, names.len() as u64) as usize;
 
         Value::Array(
             names
@@ -125,6 +150,19 @@ impl RepoBranchesContext {
                 })
                 .collect(),
         )
+    }
+
+    pub fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
+        Ok(Self {
+            limit: resolve_optional_context_value(&self.limit, runtime, "branches.limit")?
+                .map(ContextValue::from),
+            protected: resolve_optional_context_value(
+                &self.protected,
+                runtime,
+                "branches.protected",
+            )?
+            .map(ContextValue::from),
+        })
     }
 
     pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
@@ -159,11 +197,27 @@ where
                 &repo.owner,
                 &repo.name,
                 &RepoBranchesQuery {
-                    limit: context.limit.map(|value| value.clamp(1, 100) as u8),
-                    protected: context.protected,
+                    limit: context
+                        .limit
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .copied()
+                        .map(|value| value.clamp(1, 100) as u8),
+                    protected: context
+                        .protected
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .copied(),
                 },
             )
             .await?;
         serde_json::to_value(rows).map_err(Into::into)
+    }
+}
+
+fn render_param<T: std::fmt::Display>(name: &str) -> impl FnOnce(&ContextValue<T>) -> String + '_ {
+    move |value| match value {
+        ContextValue::Literal(value) => format!("{name}={value}"),
+        ContextValue::Ref(reference) => format!("{name}<-{}", reference.from),
     }
 }

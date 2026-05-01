@@ -1,0 +1,17 @@
+name: dynamic-context-consumer
+description: Resolve context inputs dynamically from input, env, and prior policy meta
+contexts:
+  - name: recent_commits
+    type: commits
+    limit:
+      from: meta.policies.dynamic-context-meta-seed.recent_commit_limit
+    ref:
+      from: env.GHRG_REF
+      default: main
+  - name: workflow_files
+    type: files
+    glob:
+      from: meta.last.workflow_glob
+    include_content:
+      from: input.include_workflow_content
+      default: false

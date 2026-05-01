@@ -4,11 +4,14 @@ use regorus::CompiledPolicy;
 use regorus::Rc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub use crate::contexts::{ContextBase, ContextProvider, ContextSpec};
+pub use crate::contexts::{
+    ContextBase, ContextProvider, ContextSpec, ContextValue, ContextValueRef, DynamicContextData,
+};
 
 use crate::error::{GhrgError, Result};
 
@@ -27,6 +30,15 @@ pub struct Policy {
 pub struct ContextRequest {
     pub key: String,
     pub spec: ContextSpec,
+}
+
+impl ContextRequest {
+    fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
+        Ok(Self {
+            key: self.key.clone(),
+            spec: self.spec.resolve_dynamic(runtime)?,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -192,10 +204,19 @@ impl Engine<Finished> {
         let mut dropped_by = None;
         let mut steps = Vec::new();
         let mut context_cache = Vec::<(ContextProvider, Value)>::new();
+        let mut meta_last = None::<Value>;
+        let mut meta_policies = Map::<String, Value>::new();
 
         for policy in &self.policies {
+            let runtime = DynamicContextData::new(&current, meta_last.as_ref(), &meta_policies);
+            let dynamic_requests = policy
+                .requests
+                .iter()
+                .map(|request| request.resolve_dynamic(&runtime))
+                .collect::<Result<Vec<_>>>()?;
+
             let contexts =
-                resolve_policy_contexts(resolver, &current, &policy.requests, &mut context_cache)
+                resolve_policy_contexts(resolver, &current, &dynamic_requests, &mut context_cache)
                     .await?;
 
             let step = evaluate_compiled_policy(policy, &attach_contexts(&current, contexts))?;
@@ -221,6 +242,13 @@ impl Engine<Finished> {
             } else {
                 keep = false;
                 dropped_by = Some(final_step.policy.clone());
+            }
+
+            if let Some(meta) = final_step.output.meta.clone() {
+                meta_last = Some(meta.clone());
+                for key in policy_meta_keys(policy) {
+                    meta_policies.insert(key, meta.clone());
+                }
             }
 
             steps.push(final_step);
@@ -553,6 +581,22 @@ fn context_requests_for_metadata(metadata: &Option<LoadedPolicyMetadata>) -> Vec
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn policy_meta_keys(policy: &CompiledPolicyUnit) -> Vec<String> {
+    let mut keys = BTreeSet::new();
+    keys.insert(policy.path.display().to_string());
+
+    if let Some(name) = policy
+        .metadata
+        .as_ref()
+        .and_then(|loaded| loaded.metadata.name.as_deref())
+        .filter(|value| !value.is_empty())
+    {
+        keys.insert(name.to_string());
+    }
+
+    keys.into_iter().collect()
 }
 
 fn collect_context_specs(policies: &[CompiledPolicyUnit]) -> Vec<ContextSpec> {
@@ -1392,6 +1436,128 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn resolves_dynamic_contexts_from_input_env_and_meta() {
+        let temp_dir = temp_dir();
+        let seed = temp_dir.join("seed.rego");
+        let consume = temp_dir.join("consume.rego");
+
+        fs::write(
+            &seed,
+            "# ```ghrg\n# name: seed_meta\n# contexts: []\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\nmeta := {\"commit_limit\": 2}\n",
+        )
+        .unwrap();
+        fs::write(
+            &consume,
+            "# ```ghrg\n# contexts:\n#   - name: recent\n#     type: commits\n#     limit:\n#       from: meta.policies.seed_meta.commit_limit\n#     author:\n#       from: env.PATH\n#     ref:\n#       from: input.default_branch\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := {\"recent\": input.contexts.recent}\n",
+        )
+        .unwrap();
+
+        let input = serde_json::json!({"default_branch": "main"});
+        let mut engine = Engine::new();
+        engine.push_file(seed).unwrap();
+        engine.push_file(consume).unwrap();
+        let engine = engine.finish().unwrap();
+        let resolver = RecordingResolver::default();
+
+        let outcome = engine.run(&input, &resolver, OutcomeVisitor).await.unwrap();
+        let calls = resolver.calls.lock().unwrap().clone();
+
+        assert!(outcome.keep);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0][0].contains("commits(limit=2"));
+        assert!(calls[0][0].contains("ref=main"));
+        assert!(calls[0][0].contains("author="));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dynamic_context_resolution_fails_when_source_missing_without_default() {
+        let temp_dir = temp_dir();
+        let policy = temp_dir.join("dynamic-missing.rego");
+
+        fs::write(
+            &policy,
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit:\n#       from: input.missing_limit\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+        )
+        .unwrap();
+
+        let input = serde_json::json!({"name": "api"});
+        let mut engine = Engine::new();
+        engine.push_file(policy).unwrap();
+        let engine = engine.finish().unwrap();
+        let resolver = RecordingResolver::default();
+
+        let error = engine
+            .run(&input, &resolver, OutcomeVisitor)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            GhrgError::ContextDynamicSourceMissing { .. }
+        ));
+        assert!(resolver.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dynamic_context_resolution_uses_default_when_source_missing() {
+        let temp_dir = temp_dir();
+        let policy = temp_dir.join("dynamic-default.rego");
+
+        fs::write(
+            &policy,
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit:\n#       from: input.missing_limit\n#       default: 4\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+        )
+        .unwrap();
+
+        let input = serde_json::json!({"name": "api"});
+        let mut engine = Engine::new();
+        engine.push_file(policy).unwrap();
+        let engine = engine.finish().unwrap();
+        let resolver = RecordingResolver::default();
+
+        let outcome = engine.run(&input, &resolver, OutcomeVisitor).await.unwrap();
+        let calls = resolver.calls.lock().unwrap().clone();
+
+        assert!(outcome.keep);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], vec!["commits(limit=4)".to_string()]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dynamic_context_resolution_parses_scalar_from_env_string() {
+        let temp_dir = temp_dir();
+        let policy = temp_dir.join("dynamic-env-limit.rego");
+
+        fs::write(
+            &policy,
+            "# ```ghrg\n# contexts:\n#   - type: commits\n#     limit:\n#       from: env.GHRG_TEST_DYNAMIC_LIMIT\n# ```\n\npackage ghrg.repos\n\ndefault allow := true\noutput := input\n",
+        )
+        .unwrap();
+
+        let input = serde_json::json!({"name": "api"});
+        let mut engine = Engine::new();
+        engine.push_file(policy).unwrap();
+        let engine = engine.finish().unwrap();
+        let resolver = RecordingResolver::default();
+
+        let _lock = ENV_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        unsafe {
+            std::env::set_var("GHRG_TEST_DYNAMIC_LIMIT", "7");
+        }
+
+        let outcome = engine.run(&input, &resolver, OutcomeVisitor).await.unwrap();
+        let calls = resolver.calls.lock().unwrap().clone();
+
+        unsafe {
+            std::env::remove_var("GHRG_TEST_DYNAMIC_LIMIT");
+        }
+
+        assert!(outcome.keep);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], vec!["commits(limit=7)".to_string()]);
+    }
+
     #[test]
     fn engine_rejects_unknown_context_provider() {
         let temp_dir = temp_dir();
@@ -1561,4 +1727,6 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         dir
     }
+
+    static ENV_TEST_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 }

@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::contexts::{ContextBase, ContextProvider, ContextSpec};
+use crate::contexts::{
+    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
+    resolve_optional_context_value,
+};
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 
@@ -57,10 +60,10 @@ pub fn example_spec(default_branch: &str) -> ContextSpec {
             name: Some("recent_src_commits".to_string()),
         },
         provider: ContextProvider::Commits(RepoCommitsContext {
-            limit: Some(3),
-            path: Some("src/".to_string()),
+            limit: Some(3.into()),
+            path: Some("src/".to_string().into()),
             author: None,
-            reference: Some(default_branch.to_string()),
+            reference: Some(default_branch.to_string().into()),
         }),
     }
 }
@@ -71,10 +74,10 @@ pub fn explicit_spec(default_branch: &str) -> ContextSpec {
             name: Some(KIND.to_string()),
         },
         provider: ContextProvider::Commits(RepoCommitsContext {
-            limit: Some(3),
-            path: Some("src/".to_string()),
-            author: Some("octocat".to_string()),
-            reference: Some(default_branch.to_string()),
+            limit: Some(3.into()),
+            path: Some("src/".to_string().into()),
+            author: Some("octocat".to_string().into()),
+            reference: Some(default_branch.to_string().into()),
         }),
     }
 }
@@ -91,38 +94,87 @@ pub struct RepoCommitsQuery {
 #[serde(deny_unknown_fields)]
 pub struct RepoCommitsContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u64>,
+    pub limit: Option<ContextValue<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub path: Option<ContextValue<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author: Option<String>,
+    pub author: Option<ContextValue<String>>,
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
-    pub reference: Option<String>,
+    pub reference: Option<ContextValue<String>>,
 }
 
 impl RepoCommitsContext {
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if self.limit.is_some_and(|value| value == 0) {
+        if self.limit.as_ref().and_then(ContextValue::literal) == Some(&0) {
             return Err("`commits.limit` must be a positive integer".to_string());
         }
+        if let Some(limit) = self.limit.as_ref().and_then(ContextValue::default_value)
+            && *limit == 0
+        {
+            return Err("`commits.limit.default` must be a positive integer".to_string());
+        }
+
+        if let Some(limit) = &self.limit {
+            limit.validate_source("commits.limit")?;
+        }
+        if let Some(path) = &self.path {
+            path.validate_source("commits.path")?;
+        }
+        if let Some(author) = &self.author {
+            author.validate_source("commits.author")?;
+        }
+        if let Some(reference) = &self.reference {
+            reference.validate_source("commits.ref")?;
+        }
+
         for (field, value) in [
-            ("path", self.path.as_deref()),
-            ("author", self.author.as_deref()),
-            ("ref", self.reference.as_deref()),
+            ("path", self.path.as_ref().and_then(ContextValue::literal)),
+            (
+                "author",
+                self.author.as_ref().and_then(ContextValue::literal),
+            ),
+            (
+                "ref",
+                self.reference.as_ref().and_then(ContextValue::literal),
+            ),
         ] {
-            if value.is_some_and(str::is_empty) {
+            if value.is_some_and(|value| value.is_empty()) {
                 return Err(format!("`commits.{field}` must be a non-empty string"));
             }
         }
+
+        for (field, value) in [
+            (
+                "path",
+                self.path.as_ref().and_then(ContextValue::default_value),
+            ),
+            (
+                "author",
+                self.author.as_ref().and_then(ContextValue::default_value),
+            ),
+            (
+                "ref",
+                self.reference
+                    .as_ref()
+                    .and_then(ContextValue::default_value),
+            ),
+        ] {
+            if value.is_some_and(|value| value.is_empty()) {
+                return Err(format!(
+                    "`commits.{field}.default` must be a non-empty string"
+                ));
+            }
+        }
+
         Ok(())
     }
 
     pub fn render_params(&self) -> String {
         [
-            self.limit.map(|value| format!("limit={value}")),
-            self.path.as_ref().map(|value| format!("path={value}")),
-            self.author.as_ref().map(|value| format!("author={value}")),
-            self.reference.as_ref().map(|value| format!("ref={value}")),
+            self.limit.as_ref().map(render_param("limit")),
+            self.path.as_ref().map(render_param("path")),
+            self.author.as_ref().map(render_param("author")),
+            self.reference.as_ref().map(render_param("ref")),
         ]
         .into_iter()
         .flatten()
@@ -130,20 +182,50 @@ impl RepoCommitsContext {
         .join(", ")
     }
     pub fn sample_value(&self, seed: &SampleRepoSeed) -> Value {
-        let count = self.limit.unwrap_or(3).clamp(1, 5) as usize;
+        let count = self
+            .limit
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or(3)
+            .clamp(1, 5) as usize;
+        let author = self
+            .author
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or_else(|| "octocat".to_string());
+        let path = self.path.as_ref().and_then(ContextValue::sample_or_default);
+        let reference = self
+            .reference
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or_else(|| seed.default_branch.clone());
+
         Value::Array(
             (0..count)
                 .map(|index| {
                     serde_json::json!({
                         "sha": format!("{:040x}", index + 1),
-                        "author": self.author.clone().unwrap_or_else(|| "octocat".to_string()),
+                        "author": author.clone(),
                         "message": format!("Sample commit {} for {}", index + 1, seed.full_name),
-                        "path": self.path.clone(),
-                        "ref": self.reference.clone().unwrap_or_else(|| seed.default_branch.clone()),
+                        "path": path.clone(),
+                        "ref": reference.clone(),
                     })
                 })
                 .collect(),
         )
+    }
+
+    pub fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
+        Ok(Self {
+            limit: resolve_optional_context_value(&self.limit, runtime, "commits.limit")?
+                .map(ContextValue::from),
+            path: resolve_optional_context_value(&self.path, runtime, "commits.path")?
+                .map(ContextValue::from),
+            author: resolve_optional_context_value(&self.author, runtime, "commits.author")?
+                .map(ContextValue::from),
+            reference: resolve_optional_context_value(&self.reference, runtime, "commits.ref")?
+                .map(ContextValue::from),
+        })
     }
 
     pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
@@ -178,13 +260,37 @@ where
                 &repo.owner,
                 &repo.name,
                 &RepoCommitsQuery {
-                    limit: context.limit.map(|value| value.clamp(1, 100) as u8),
-                    path: context.path.clone(),
-                    author: context.author.clone(),
-                    reference: context.reference.clone(),
+                    limit: context
+                        .limit
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .copied()
+                        .map(|value| value.clamp(1, 100) as u8),
+                    path: context
+                        .path
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .cloned(),
+                    author: context
+                        .author
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .cloned(),
+                    reference: context
+                        .reference
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .cloned(),
                 },
             )
             .await?;
         serde_json::to_value(rows).map_err(Into::into)
+    }
+}
+
+fn render_param<T: std::fmt::Display>(name: &str) -> impl FnOnce(&ContextValue<T>) -> String + '_ {
+    move |value| match value {
+        ContextValue::Literal(value) => format!("{name}={value}"),
+        ContextValue::Ref(reference) => format!("{name}<-{}", reference.from),
     }
 }

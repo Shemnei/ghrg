@@ -1,8 +1,9 @@
 name: renovate-minimum-release-age
 description: Extend the Renovate config check with a minimumReleaseAge threshold over 7 days
 contexts:
-  - name: renovate_config_files
+  - name: selected_renovate_config
     type: files
-    glob: "{renovate.json,renovate.json5,.github/renovate.json,.github/renovate.json5,.gitlab/renovate.json,.gitlab/renovate.json5,.renovaterc,.renovaterc.json,.renovaterc.json5}"
-    limit: 10
+    glob:
+      from: input.RenovateConfigPath
+      default: "__no_renovate_config__"
     include_content: true

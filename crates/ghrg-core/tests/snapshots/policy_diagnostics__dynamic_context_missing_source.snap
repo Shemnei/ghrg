@@ -1,0 +1,6 @@
+---
+source: crates/ghrg-core/tests/policy_diagnostics.rs
+expression: render_diagnostic(&error)
+---
+  x failed to resolve dynamic context field `commits.limit` from `input.missing_limit`: source value is missing
+  help: set a `default` value in the context field or ensure the input/env/meta source exists

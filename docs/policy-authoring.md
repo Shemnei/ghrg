@@ -216,6 +216,55 @@ During `ghrg repos`, requested contexts are fetched from GitHub and attached und
 
 During `ghrg policy test` and `ghrg policy trace`, requested contexts are populated with local sample values derived from the input object.
 
+### Dynamic context fields
+
+Context fields can be static literals or dynamic references.
+
+Static:
+
+```yaml
+contexts:
+  - type: commits
+    limit: 5
+```
+
+Dynamic:
+
+```yaml
+contexts:
+  - name: recent_commits
+    type: commits
+    limit:
+      from: input.max_commit_limit
+      default: 5
+    ref:
+      from: env.GHRG_REF
+      default: main
+```
+
+Reference shape:
+
+- `from` (required): source path
+- `default` (optional): fallback when source is missing
+
+Supported `from` sources:
+
+- `input` or `input.<path>`
+- `env.<VAR_NAME>`
+- `meta.last` or `meta.last.<path>`
+- `meta.policies` or `meta.policies.<policy_key>[.<path>]`
+
+Policy keys under `meta.policies` are available by:
+
+- metadata name (when `name` is set in policy metadata)
+- policy path
+
+Resolution behavior:
+
+- values are resolved per policy step, before context fetch
+- missing source without `default` fails fast
+- type mismatches fail with a context field resolution error
+
 ## Multiple `--policy` files
 
 When you pass multiple policy files, `ghrg` evaluates them in the order you provide them.

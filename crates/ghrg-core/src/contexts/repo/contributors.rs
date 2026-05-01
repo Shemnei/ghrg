@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::contexts::{ContextBase, ContextProvider, ContextSpec};
+use crate::contexts::{
+    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
+    resolve_optional_context_value,
+};
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 
@@ -46,8 +49,8 @@ pub fn example_spec(_default_branch: &str) -> ContextSpec {
             name: Some("top_contributors".to_string()),
         },
         provider: ContextProvider::Contributors(RepoContributorsContext {
-            limit: Some(5),
-            anonymous: Some(false),
+            limit: Some(5.into()),
+            anonymous: Some(false.into()),
         }),
     }
 }
@@ -58,8 +61,8 @@ pub fn explicit_spec(_default_branch: &str) -> ContextSpec {
             name: Some(KIND.to_string()),
         },
         provider: ContextProvider::Contributors(RepoContributorsContext {
-            limit: Some(10),
-            anonymous: Some(false),
+            limit: Some(10.into()),
+            anonymous: Some(false.into()),
         }),
     }
 }
@@ -74,23 +77,36 @@ pub struct RepoContributorsQuery {
 #[serde(deny_unknown_fields)]
 pub struct RepoContributorsContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u64>,
+    pub limit: Option<ContextValue<u64>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub anonymous: Option<bool>,
+    pub anonymous: Option<ContextValue<bool>>,
 }
 
 impl RepoContributorsContext {
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if self.limit.is_some_and(|value| value == 0) {
+        if self.limit.as_ref().and_then(ContextValue::literal) == Some(&0) {
             return Err("`contributors.limit` must be a positive integer".to_string());
         }
+        if let Some(limit) = self.limit.as_ref().and_then(ContextValue::default_value)
+            && *limit == 0
+        {
+            return Err("`contributors.limit.default` must be a positive integer".to_string());
+        }
+
+        if let Some(limit) = &self.limit {
+            limit.validate_source("contributors.limit")?;
+        }
+        if let Some(anonymous) = &self.anonymous {
+            anonymous.validate_source("contributors.anonymous")?;
+        }
+
         Ok(())
     }
 
     pub fn render_params(&self) -> String {
         [
-            self.limit.map(|value| format!("limit={value}")),
-            self.anonymous.map(|value| format!("anonymous={value}")),
+            self.limit.as_ref().map(render_param("limit")),
+            self.anonymous.as_ref().map(render_param("anonymous")),
         ]
         .into_iter()
         .flatten()
@@ -98,11 +114,22 @@ impl RepoContributorsContext {
         .join(", ")
     }
     pub fn sample_value(&self, _seed: &SampleRepoSeed) -> Value {
-        let count = self.limit.unwrap_or(3).clamp(1, 5) as usize;
+        let count = self
+            .limit
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or(3)
+            .clamp(1, 5) as usize;
+        let include_anonymous = self
+            .anonymous
+            .as_ref()
+            .and_then(ContextValue::sample_or_default)
+            .unwrap_or(false);
+
         Value::Array(
             (0..count)
                 .map(|index| {
-                    let anonymous = self.anonymous.unwrap_or(false) && index + 1 == count;
+                    let anonymous = include_anonymous && index + 1 == count;
                     serde_json::json!({
                         "login": (!anonymous).then(|| format!("contributor-{}", index + 1)),
                         "id": (!anonymous).then(|| index + 1000),
@@ -116,6 +143,19 @@ impl RepoContributorsContext {
                 })
                 .collect(),
         )
+    }
+
+    pub fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
+        Ok(Self {
+            limit: resolve_optional_context_value(&self.limit, runtime, "contributors.limit")?
+                .map(ContextValue::from),
+            anonymous: resolve_optional_context_value(
+                &self.anonymous,
+                runtime,
+                "contributors.anonymous",
+            )?
+            .map(ContextValue::from),
+        })
     }
 
     pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
@@ -150,11 +190,28 @@ where
                 &repo.owner,
                 &repo.name,
                 &RepoContributorsQuery {
-                    limit: context.limit.map(|value| value.clamp(1, 100) as u16),
-                    anonymous: context.anonymous.unwrap_or(false),
+                    limit: context
+                        .limit
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .copied()
+                        .map(|value| value.clamp(1, 100) as u16),
+                    anonymous: context
+                        .anonymous
+                        .as_ref()
+                        .and_then(ContextValue::literal)
+                        .copied()
+                        .unwrap_or(false),
                 },
             )
             .await?;
         serde_json::to_value(rows).map_err(Into::into)
+    }
+}
+
+fn render_param<T: std::fmt::Display>(name: &str) -> impl FnOnce(&ContextValue<T>) -> String + '_ {
+    move |value| match value {
+        ContextValue::Literal(value) => format!("{name}={value}"),
+        ContextValue::Ref(reference) => format!("{name}<-{}", reference.from),
     }
 }

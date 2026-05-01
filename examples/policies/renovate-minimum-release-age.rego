@@ -1,23 +1,47 @@
 package ghrg.repos
 
 default allow := false
+default renovate_configured := false
+default selected_config_path := null
+default repo_archived := false
 default minimum_release_age_enabled := false
 default minimum_release_age_over_7_days := false
 default minimum_release_age_policy_satisfied := false
 
 allow if {
-    input.Name != ""
+    repo_name != ""
 }
 
-matching_file(path) := file if {
-    some file in input.contexts.renovate_config_files
-    file.path == path
+repo_name := name if {
+    name := input.Name
+    name != ""
+} else := name if {
+    name := input.name
+    name != ""
+}
+
+repo_archived := archived if {
+    archived := input.Archived
+} else := archived if {
+    archived := input.archived
 }
 
 selected_config_file := file if {
+    some file in input.contexts.selected_renovate_config
+    file.path == input.RenovateConfigPath
+}
+
+selected_config_path := path if {
     path := input.RenovateConfigPath
     path != null
-    file := matching_file(path)
+}
+
+renovate_configured if {
+    input.RenovateConfigured
+}
+
+renovate_configured if {
+    selected_config_path != null
 }
 
 minimum_release_age_enabled if {
@@ -39,15 +63,15 @@ minimum_release_age_over_7_days if {
 }
 
 minimum_release_age_policy_satisfied if {
-    input.RenovateConfigured
+    renovate_configured
     minimum_release_age_over_7_days
 }
 
 output := {
-    "Name": input.Name,
-    "Archived": input.Archived,
-    "RenovateConfigured": input.RenovateConfigured,
-    "RenovateConfigPath": input.RenovateConfigPath,
+    "Name": repo_name,
+    "Archived": repo_archived,
+    "RenovateConfigured": renovate_configured,
+    "RenovateConfigPath": selected_config_path,
     "MinimumReleaseAgeEnabled": minimum_release_age_enabled,
     "MinimumReleaseAgeOver7Days": minimum_release_age_over_7_days,
     "MinimumReleaseAgePolicySatisfied": minimum_release_age_policy_satisfied,

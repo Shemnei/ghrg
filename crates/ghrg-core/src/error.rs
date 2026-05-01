@@ -1,4 +1,5 @@
 use miette::{Diagnostic, NamedSource, SourceSpan};
+use serde_json::Value;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, GhrgError>;
@@ -135,6 +136,25 @@ pub enum GhrgError {
         "use one of `properties`, `languages`, `branches`, `commits`, `files`, `contributors`, or `workflow_runs`"
     ))]
     InvalidContextKind { kind: String },
+
+    #[error(
+        "failed to resolve dynamic context field `{field}` from `{source_path}`: source value is missing"
+    )]
+    #[diagnostic(help(
+        "set a `default` value in the context field or ensure the input/env/meta source exists"
+    ))]
+    ContextDynamicSourceMissing { field: String, source_path: String },
+
+    #[error("failed to resolve dynamic context field `{field}` from `{source_path}`: {details}")]
+    #[diagnostic(help(
+        "ensure the source value type matches the context field type, or use a compatible `default`"
+    ))]
+    ContextDynamicTypeMismatch {
+        field: String,
+        source_path: String,
+        value: Value,
+        details: String,
+    },
 
     #[error("conflicting context specifications for `{key}`")]
     #[diagnostic(help(

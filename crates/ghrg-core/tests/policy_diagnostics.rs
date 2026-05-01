@@ -49,3 +49,27 @@ async fn regorus_eval_diagnostic_matches_snapshot() {
         .unwrap_err();
     assert_snapshot!("regorus_eval", render_diagnostic(&error));
 }
+
+#[test]
+fn dynamic_context_invalid_source_diagnostic_matches_snapshot() {
+    let mut engine = Engine::new();
+    let error = engine
+        .push_file(fixture_path("dynamic-invalid-source.rego"))
+        .unwrap_err();
+    assert_snapshot!("dynamic_context_invalid_source", render_diagnostic(&error));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dynamic_context_missing_source_diagnostic_matches_snapshot() {
+    let input = serde_json::json!({"name": "api"});
+    let mut engine = Engine::new();
+    engine
+        .push_file(fixture_path("dynamic-missing-source.rego"))
+        .unwrap();
+    let engine = engine.finish().unwrap();
+    let error = engine
+        .run(&input, &EmptyResolver, OutcomeVisitor)
+        .await
+        .unwrap_err();
+    assert_snapshot!("dynamic_context_missing_source", render_diagnostic(&error));
+}

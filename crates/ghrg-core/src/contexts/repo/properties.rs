@@ -1,4 +1,6 @@
-use crate::contexts::{ContextBase, ContextProvider, ContextSpec};
+use crate::contexts::{
+    ContextBase, ContextProvider, ContextSpec, ContextValue, DynamicContextData,
+};
 use crate::error::Result;
 use crate::github::{RepoDataSource, RepositoryBase};
 use async_trait::async_trait;
@@ -37,7 +39,7 @@ pub fn example_spec(_default_branch: &str) -> ContextSpec {
             name: Some("repo_properties".to_string()),
         },
         provider: ContextProvider::Properties(RepoPropertiesContext {
-            names: vec!["Team".to_string(), "CodeOwner".to_string()],
+            names: vec!["Team".to_string(), "CodeOwner".to_string()].into(),
         }),
     }
 }
@@ -48,7 +50,7 @@ pub fn explicit_spec(_default_branch: &str) -> ContextSpec {
             name: Some(KIND.to_string()),
         },
         provider: ContextProvider::Properties(RepoPropertiesContext {
-            names: vec!["Team".to_string(), "CodeOwner".to_string()],
+            names: vec!["Team".to_string(), "CodeOwner".to_string()].into(),
         }),
     }
 }
@@ -56,32 +58,49 @@ pub fn explicit_spec(_default_branch: &str) -> ContextSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RepoPropertiesContext {
-    pub names: Vec<String>,
+    pub names: ContextValue<Vec<String>>,
 }
 
 impl RepoPropertiesContext {
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if self.names.is_empty() || self.names.iter().any(|value| value.is_empty()) {
+        self.names.validate_source("properties.names")?;
+
+        if let Some(names) = self.names.literal() {
+            if names.is_empty() || names.iter().any(|value| value.is_empty()) {
+                return Err(
+                    "`properties.names` must contain at least one non-empty string".to_string(),
+                );
+            }
+        }
+
+        if let Some(default) = self.names.default_value()
+            && (default.is_empty() || default.iter().any(|value| value.is_empty()))
+        {
             return Err(
-                "`properties.names` must contain at least one non-empty string".to_string(),
+                "`properties.names.default` must contain at least one non-empty string".to_string(),
             );
         }
+
         Ok(())
     }
 
     pub fn render_params(&self) -> String {
-        if self.names.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "names={}",
-                serde_json::to_string(&self.names).unwrap_or_default()
-            )
+        match &self.names {
+            ContextValue::Literal(names) if names.is_empty() => String::new(),
+            ContextValue::Literal(names) => {
+                format!("names={}", serde_json::to_string(names).unwrap_or_default())
+            }
+            ContextValue::Ref(reference) => format!("names<-{}", reference.from),
         }
     }
 
     pub fn sample_value(&self, _seed: &SampleRepoSeed) -> Value {
-        Value::Object(Map::from_iter(self.names.iter().map(|name| {
+        let names = self
+            .names
+            .sample_or_default()
+            .unwrap_or_else(|| vec!["Team".to_string(), "CodeOwner".to_string()]);
+
+        Value::Object(Map::from_iter(names.iter().map(|name| {
             (
                 name.clone(),
                 match name.as_str() {
@@ -93,6 +112,13 @@ impl RepoPropertiesContext {
             )
         })))
     }
+
+    pub fn resolve_dynamic(&self, runtime: &DynamicContextData<'_>) -> Result<Self> {
+        Ok(Self {
+            names: self.names.resolve(runtime, "properties.names")?.into(),
+        })
+    }
+
     pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
     where
         T: ResolveRepoProperties + Sync,
@@ -120,12 +146,9 @@ where
         repo: &RepositoryBase,
         context: &RepoPropertiesContext,
     ) -> Result<Value> {
-        self.fetch_repo_properties(
-            &repo.owner,
-            &repo.name,
-            &context.names.iter().cloned().collect(),
-        )
-        .await
-        .map(Value::Object)
+        let names = context.names.literal().cloned().unwrap_or_default();
+        self.fetch_repo_properties(&repo.owner, &repo.name, &names.into_iter().collect())
+            .await
+            .map(Value::Object)
     }
 }

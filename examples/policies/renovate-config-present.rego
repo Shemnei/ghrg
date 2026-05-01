@@ -45,7 +45,17 @@ output := {
     "Name": input.name,
     "Archived": input.archived,
     "RenovateConfigured": renovate_configured,
+} if {
+    not renovate_configured
+}
+
+output := {
+    "Name": input.name,
+    "Archived": input.archived,
+    "RenovateConfigured": renovate_configured,
     "RenovateConfigPath": selected_config_path,
+} if {
+    renovate_configured
 }
 
 meta := {

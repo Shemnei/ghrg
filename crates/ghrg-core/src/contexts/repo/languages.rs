@@ -64,6 +64,13 @@ impl RepoLanguagesContext {
         })
     }
 
+    pub fn resolve_dynamic(
+        &self,
+        _runtime: &crate::contexts::DynamicContextData<'_>,
+    ) -> Result<Self> {
+        Ok(self.clone())
+    }
+
     pub async fn resolve<T>(&self, client: &T, repo: &RepositoryBase) -> Result<Value>
     where
         T: ResolveRepoLanguages + Sync,
