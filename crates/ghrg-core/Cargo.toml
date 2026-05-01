@@ -12,6 +12,7 @@ keywords = ["github", "rego", "policy", "governance"]
 categories = ["development-tools", "api-bindings"]
 
 [dependencies]
+base64.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 csv.workspace = true

@@ -298,6 +298,7 @@ ghrg repos --repo acme/api --format raw
 - Examples index: `examples/README.md`
 - Example input: `examples/inputs/repo.json`
 - Starter report example: `examples/policies/project-summary.rego`
+- Renovate policy chain: `examples/policies/renovate-config-present.rego` then `examples/policies/renovate-minimum-release-age.rego`
 - Project disclaimer: `DISCLAIMER.md`
 - Auth and setup guide: `docs/auth.md`
 - Policy authoring guide: `docs/policy-authoring.md`

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use jsonwebtoken::EncodingKey;
 use octocrab::{
     Octocrab, Page,
@@ -101,6 +102,8 @@ pub struct RepoFileEntry {
     pub size: Option<u64>,
     pub reference: String,
     pub glob: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -281,6 +284,18 @@ impl GitHubClient {
             page = next;
         }
     }
+
+    async fn fetch_repo_blob_content(&self, owner: &str, repo: &str, sha: &str) -> Result<String> {
+        let route = format!("/repos/{owner}/{repo}/git/blobs/{sha}");
+        let blob = github_request_result(
+            self.client
+                .get::<RepoBlobResponse, _, _>(route, None::<&()>)
+                .await,
+            format!("fetch blob {sha} for repository {owner}/{repo}"),
+        )?;
+
+        decode_repo_blob_content(blob, owner, repo, sha)
+    }
 }
 
 #[async_trait]
@@ -442,7 +457,7 @@ impl RepoDataSource for GitHubClient {
         let limit = query.limit.unwrap_or(100).clamp(1, 500) as usize;
         let matcher = compile_files_matcher(query.glob.as_deref())?;
 
-        Ok(tree
+        let mut entries = tree
             .tree
             .into_iter()
             .filter(|entry| matcher.is_match(&entry.path))
@@ -450,7 +465,23 @@ impl RepoDataSource for GitHubClient {
             .map(|entry| {
                 normalize_file_entry(entry, reference, query.glob.as_deref().unwrap_or("**"))
             })
-            .collect())
+            .collect::<Vec<_>>();
+
+        if query.include_content {
+            for entry in &mut entries {
+                if entry.entry_type != "blob" {
+                    continue;
+                }
+
+                let Some(sha) = entry.sha.as_deref() else {
+                    continue;
+                };
+
+                entry.content = Some(self.fetch_repo_blob_content(owner, repo, sha).await?);
+            }
+        }
+
+        Ok(entries)
     }
 
     async fn fetch_repo_contributors(
@@ -606,6 +637,12 @@ struct RepoTreeResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct RepoBlobResponse {
+    content: String,
+    encoding: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RepoTreeEntry {
     path: String,
     mode: Option<String>,
@@ -673,7 +710,38 @@ fn normalize_file_entry(entry: RepoTreeEntry, reference: &str, glob: &str) -> Re
         size: entry.size,
         reference: reference.to_string(),
         glob: glob.to_string(),
+        content: None,
     }
+}
+
+fn decode_repo_blob_content(
+    blob: RepoBlobResponse,
+    owner: &str,
+    repo: &str,
+    sha: &str,
+) -> Result<String> {
+    if blob.encoding != "base64" {
+        return Err(GhrgError::GitHubRequest {
+            operation: format!("decode blob {sha} for repository {owner}/{repo}"),
+            message: format!("unsupported blob encoding `{}`", blob.encoding),
+            status: None,
+            body: None,
+            details: "expected GitHub blob responses to use base64 encoding".to_string(),
+        });
+    }
+
+    let normalized = blob.content.lines().collect::<String>();
+    let bytes = STANDARD
+        .decode(normalized)
+        .map_err(|error| GhrgError::GitHubRequest {
+            operation: format!("decode blob {sha} for repository {owner}/{repo}"),
+            message: "invalid base64 blob payload".to_string(),
+            status: None,
+            body: None,
+            details: error.to_string(),
+        })?;
+
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn normalize_branch(branch: RepoBranchResponse) -> RepoBranch {
@@ -925,5 +993,17 @@ mod tests {
 
         assert_eq!(properties.get("CodeOwner"), Some(&Value::Null));
         assert_eq!(properties.get("Team"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn decode_repo_blob_content_decodes_wrapped_base64() {
+        let blob = RepoBlobResponse {
+            content: "eyJtaW5pbXVtUmVsZWFzZUFnZSI6ICIxNCBkYXlzIn0=\n".to_string(),
+            encoding: "base64".to_string(),
+        };
+
+        let content = decode_repo_blob_content(blob, "acme", "api", "abc").unwrap();
+
+        assert_eq!(content, r#"{"minimumReleaseAge": "14 days"}"#);
     }
 }

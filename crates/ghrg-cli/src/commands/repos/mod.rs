@@ -794,6 +794,7 @@ mod tests {
                 size: Some(42),
                 reference: "main".to_string(),
                 glob: "**".to_string(),
+                content: None,
             }])
         }
 

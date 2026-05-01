@@ -1,0 +1,7 @@
+name: renovate-config-present
+description: Detect whether a repository has a supported Renovate configuration file
+contexts:
+  - name: renovate_config_files
+    type: files
+    glob: "{renovate.json,renovate.json5,.github/renovate.json,.github/renovate.json5,.gitlab/renovate.json,.gitlab/renovate.json5,.renovaterc,.renovaterc.json,.renovaterc.json5}"
+    limit: 10

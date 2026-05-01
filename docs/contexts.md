@@ -262,7 +262,7 @@ Performance notes:
 
 Purpose:
 
-- fetch repository file entries, optionally filtered by glob and ref
+- fetch repository file entries, optionally filtered by glob and ref, with optional text content
 
 Config fields:
 
@@ -270,6 +270,7 @@ Config fields:
 - optional: `glob`
 - optional: `limit`
 - optional: `ref`
+- optional: `include_content`
 
 Rules:
 
@@ -277,6 +278,7 @@ Rules:
 - `limit` must be positive
 - live requests are clamped to 500
 - when `ref` is omitted, `ghrg` defaults to the repo default branch
+- when `include_content` is `true`, `ghrg` fetches blob text for matched file entries
 
 Example declaration:
 
@@ -287,6 +289,7 @@ contexts:
     glob: .github/workflows/*.yml
     limit: 20
     ref: main
+    include_content: true
 ```
 
 Sample shape:
@@ -296,6 +299,7 @@ Sample shape:
   "workflow_files": [
     {
       "glob": ".github/workflows/*.yml",
+      "content": "name: CI\non: [push]\n",
       "mode": "100644",
       "name": "check-1.yml",
       "path": ".github/workflows/check-1.yml",
@@ -314,10 +318,18 @@ Policy usage:
 count(input.contexts.workflow_files) > 0
 ```
 
+When `include_content` is enabled, policies can inspect `file.content` for matched blobs:
+
+```rego
+some file in input.contexts.workflow_files
+contains(file.content, "on:")
+```
+
 Performance notes:
 
 - often one of the more expensive contexts
 - always narrow by `glob` and set a realistic `limit`
+- enabling `include_content` adds one blob fetch per matched file
 - avoid using this as a first-stage check across very large scans when a cheaper signal exists
 
 ## `contributors`

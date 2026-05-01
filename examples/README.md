@@ -108,9 +108,21 @@ For smaller local experiments:
 - `examples/policies/filter-active.rego`: minimal embedded-metadata filter
 - `examples/policies/project-summary.rego`: final projection policy with sidecar metadata
 - `examples/policies/project-summary.ghrg.yaml`: requests the named `repo_properties` context
+- `examples/policies/renovate-config-present.rego`: detects whether Renovate is configured in supported repo locations
+- `examples/policies/renovate-minimum-release-age.rego`: extends the Renovate check with a `minimumReleaseAge > 7 days` policy
 - `examples/inputs/repo.json`: local JSON input using the same `repo_properties` key
 
 The starter projection uses the same title-cased report style as the end-to-end examples while keeping the input small enough for quick local iteration.
+
+Renovate policy chain example:
+
+```bash
+ghrg policy test \
+  --policy examples/policies/renovate-config-present.rego \
+  --policy examples/policies/renovate-minimum-release-age.rego \
+  --input examples/inputs/repo.json \
+  --format json
+```
 
 Local authoring loop:
 
